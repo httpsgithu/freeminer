@@ -1,24 +1,6 @@
-/*
-script/common/c_internal.h
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
-
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 /******************************************************************************/
 /******************************************************************************/
@@ -27,14 +9,16 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 /******************************************************************************/
 /******************************************************************************/
 
-#ifndef C_INTERNAL_H_
-#define C_INTERNAL_H_
+#pragma once
+
+#include <string_view>
 
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
 }
 
+#include "config.h"
 #include "common/c_types.h"
 
 
@@ -47,30 +31,49 @@ extern "C" {
 	Lua 5.1 / LuaJIT do not use any numeric indices (only string indices),
 	so we can use numeric indices freely.
 */
+enum {
 #ifdef LUA_RIDX_LAST
-#define CUSTOM_RIDX_BASE ((LUA_RIDX_LAST)+1)
+	CUSTOM_RIDX_BEFORE_ = LUA_RIDX_LAST,
 #else
-#define CUSTOM_RIDX_BASE 1
+	CUSTOM_RIDX_BEFORE_ = 0,
 #endif
 
-#define CUSTOM_RIDX_SCRIPTAPI           (CUSTOM_RIDX_BASE)
-#define CUSTOM_RIDX_GLOBALS_BACKUP      (CUSTOM_RIDX_BASE + 1)
-#define CUSTOM_RIDX_CURRENT_MOD_NAME    (CUSTOM_RIDX_BASE + 2)
-#define CUSTOM_RIDX_ERROR_HANDLER       (CUSTOM_RIDX_BASE + 3)
+	CUSTOM_RIDX_SCRIPTAPI,
+	CUSTOM_RIDX_GLOBALS_BACKUP,
+	CUSTOM_RIDX_CURRENT_MOD_NAME,
+	CUSTOM_RIDX_ERROR_HANDLER,
+	CUSTOM_RIDX_HTTP_API_LUA,
+	CUSTOM_RIDX_METATABLE_MAP,
+
+	// The following functions are implemented in Lua because LuaJIT can
+	// trace them and optimize tables/string better than from the C API.
+	CUSTOM_RIDX_READ_VECTOR,
+	CUSTOM_RIDX_PUSH_VECTOR,
+	CUSTOM_RIDX_READ_NODE,
+	CUSTOM_RIDX_PUSH_NODE,
+	CUSTOM_RIDX_PUSH_MOVERESULT1,
+};
+
+
+// Determine if CUSTOM_RIDX_SCRIPTAPI will hold a light or full userdata
+#if defined(__aarch64__) && USE_LUAJIT
+/* LuaJIT has a 47-bit limit for lightuserdata on this platform and we cannot
+ * assume that the ScriptApi class was allocated at a fitting address. */
+#define INDIRECT_SCRIPTAPI_RIDX 1
+#else
+#define INDIRECT_SCRIPTAPI_RIDX 0
+#endif
 
 // Pushes the error handler onto the stack and returns its index
 #define PUSH_ERROR_HANDLER(L) \
 	(lua_rawgeti((L), LUA_REGISTRYINDEX, CUSTOM_RIDX_ERROR_HANDLER), lua_gettop((L)))
 
-#define PCALL_RESL(L, RES) do {                         \
+#define PCALL_RESL(L, RES) {                            \
 	int result_ = (RES);                                \
 	if (result_ != 0) {                                 \
 		script_error((L), result_, NULL, __FUNCTION__); \
 	}                                                   \
-} while (0)
-
-#define script_run_callbacks(L, nargs, mode) \
-	script_run_callbacks_f((L), (nargs), (mode), __FUNCTION__)
+}
 
 // What script_run_callbacks does with the return values of callbacks.
 // Regardless of the mode, if only one callback is defined,
@@ -99,15 +102,46 @@ enum RunCallbacksMode
 	// after seeing the first true value
 	RUN_CALLBACKS_MODE_OR_SC,
 	// Note: "a true value" and "a false value" refer to values that
-	// are converted by lua_toboolean to true or false, respectively.
+	// are converted by readParam<bool> to true or false, respectively.
 };
 
+// Gets a backtrace of the current execution point
 std::string script_get_backtrace(lua_State *L);
-int script_error_handler(lua_State *L);
+// Wrapper for CFunction calls that converts C++ exceptions to Lua errors
 int script_exception_wrapper(lua_State *L, lua_CFunction f);
+// Acts as the error handler for lua_pcall
+int script_error_handler(lua_State *L);
+// Takes an error from lua_pcall and throws it as a LuaError
 void script_error(lua_State *L, int pcall_result, const char *mod, const char *fxn);
-void script_run_callbacks_f(lua_State *L, int nargs,
-	RunCallbacksMode mode, const char *fxn);
-void log_deprecated(lua_State *L, const std::string &message);
 
-#endif /* C_INTERNAL_H_ */
+bool script_log_unique(lua_State *L, std::string_view message, std::ostream &log_to,
+	int stack_depth = 1);
+
+enum DeprecatedHandlingMode {
+	Ignore,
+	Log,
+	Error
+};
+
+/**
+ * Reads `deprecated_lua_api_handling` in settings, returns cached value.
+ *
+ * @return DeprecatedHandlingMode
+ */
+DeprecatedHandlingMode get_deprecated_handling_mode();
+
+/**
+ * Handles a deprecation warning based on user settings
+ *
+ * @param L Lua State
+ * @param message The deprecation method
+ * @param stack_depth How far on the stack to the first user function
+ *        (ie: not builtin or core). -1 to disabled.
+ * @param once Log the deprecation warning only once per callsite.
+ */
+void log_deprecated(lua_State *L, std::string_view message,
+	int stack_depth = 1, bool once = false);
+
+// Safely call string.dump on a function value
+// (does not pop, leaves one value on stack)
+void call_string_dump(lua_State *L, int idx);

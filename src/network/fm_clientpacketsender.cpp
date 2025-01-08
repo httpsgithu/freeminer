@@ -17,7 +17,7 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 #include <vector>
 #include <string>
 #include "../util/auth.h"
-#include "client.h"
+#include "client/client.h"
 #include "networkprotocol.h"
 
 void Client::request_media(const std::vector<std::string> &file_requests)
@@ -199,7 +199,6 @@ void Client::sendChangePassword(const std::string &oldpassword,
 
 void Client::sendDamage(u8 damage)
 {
-	DSTACK(FUNCTION_NAME);
 	MSGPACK_PACKET_INIT((int)TOSERVER_DAMAGE, 1);
 	PACK(TOSERVER_DAMAGE_VALUE, damage);
 
@@ -209,8 +208,6 @@ void Client::sendDamage(u8 damage)
 
 void Client::sendBreath(u16 breath)
 {
-	DSTACK(FUNCTION_NAME);
-
 	MSGPACK_PACKET_INIT((int)TOSERVER_BREATH, 1);
 	PACK(TOSERVER_BREATH_VALUE, breath);
 	// Send as reliable
@@ -219,8 +216,6 @@ void Client::sendBreath(u16 breath)
 
 void Client::sendRespawn()
 {
-	DSTACK(FUNCTION_NAME);
-
 	MSGPACK_PACKET_INIT((int)TOSERVER_RESPAWN, 0);
 	// Send as reliable
 	Send(0, buffer, true);
@@ -228,8 +223,6 @@ void Client::sendRespawn()
 
 void Client::sendReady()
 {
-	DSTACK(FUNCTION_NAME);
-
 	MSGPACK_PACKET_INIT((int)TOSERVER_CLIENT_READY, 5);
 	PACK(TOSERVER_CLIENT_READY_VERSION_MAJOR, VERSION_MAJOR);
 	PACK(TOSERVER_CLIENT_READY_VERSION_MINOR, VERSION_MINOR);
@@ -303,17 +296,4 @@ void Client::sendPlayerItem(u16 item)
 
 	// Send as reliable
 	Send(0, buffer, true);
-}
-
-
-void Client::sendDrawControl() {
-	MSGPACK_PACKET_INIT((int)TOSERVER_DRAWCONTROL, 5);
-	const auto & draw_control = m_env.getClientMap().getControl();
-	PACK(TOSERVER_DRAWCONTROL_WANTED_RANGE, (u32)draw_control.wanted_range);
-	PACK(TOSERVER_DRAWCONTROL_RANGE_ALL, (u32)draw_control.range_all);
-	PACK(TOSERVER_DRAWCONTROL_FARMESH, (u8)draw_control.farmesh);
-	PACK(TOSERVER_DRAWCONTROL_FOV, draw_control.fov);
-	PACK(TOSERVER_DRAWCONTROL_BLOCK_OVERFLOW, false /*draw_control.block_overflow*/);
-
-	Send(0, buffer, false);
 }

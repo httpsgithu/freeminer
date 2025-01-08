@@ -19,21 +19,21 @@
 
 #include "stat.h"
 #include "gettime.h"
-//#include "log.h"
 
-
-Stat::Stat(std::string savedir) :
-	database(savedir, "stat") {
+Stat::Stat(const std::string &savedir) : database(savedir, "stat")
+{
 	update_time();
 };
 
-Stat::~Stat() {
+Stat::~Stat()
+{
 	save();
 };
 
-void Stat::save() {
-	std::lock_guard<Mutex> lock(mutex);
-	for(const auto & ir : stats) {
+void Stat::save()
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	for (const auto &ir : stats) {
 		//errorstream<<"stat saving: "<<ir.first<< " = "<< ir.second<<std::endl;
 		if (ir.second)
 			database.put(ir.first, ir.second);
@@ -41,55 +41,64 @@ void Stat::save() {
 	update_time();
 }
 
-void Stat::unload() {
+void Stat::unload()
+{
 	save();
-	std::lock_guard<Mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(mutex);
 	stats.clear();
 }
 
-void Stat::open() {
+void Stat::open()
+{
 	database.open();
 }
 
-void Stat::close() {
+void Stat::close()
+{
 	unload();
 	database.close();
 }
 
-stat_value Stat::get(const std::string & key) {
-	std::lock_guard<Mutex> lock(mutex);
-	if (!stats.count(key))
+const Stat::stat_value &Stat::get(const std::string &key)
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	if (!stats.contains(key)) {
 		database.get(key, stats[key]);
+	}
 	//errorstream<<"stat get: "<<key<<" = "<< stats[key]<<std::endl;
 	return stats[key];
 }
 
-stat_value Stat::write_one(const std::string & key, const stat_value & value) {
+const Stat::stat_value &Stat::write_one(const std::string &key, const stat_value &value)
+{
 	//errorstream<<"stat one: "<<key<< " = "<< value<<std::endl;
 	get(key);
-	std::lock_guard<Mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(mutex);
 	return stats[key] += value;
 }
 
-stat_value Stat::add(const std::string & key, const std::string & player, stat_value value) {
+Stat::stat_value Stat::add(
+		const std::string &key, const std::string &player, stat_value value)
+{
 	//errorstream<<"stat adding: "<<key<< " player="<<player<<" = "<< value<<std::endl;
 	stat_value ret = write_one("total|" + key, value);
-	write_one("day|"+ key + "|" + day , value);
-	write_one("week|"+ key + "|" + week, value);
-	write_one("month|"+ key + "|" + month, value);
+	write_one("day|" + key + "|" + day, value);
+	write_one("week|" + key + "|" + week, value);
+	write_one("month|" + key + "|" + month, value);
 	if (!player.empty())
-		ret = write_one("player|" + key  + "|" + player, value);
+		ret = write_one("player|" + key + "|" + player, value);
 	return ret;
 }
 
-void Stat::update_time() {
-	auto t = time(NULL);
-	auto tm = localtime_safe(&t);
+void Stat::update_time()
+{
+	//auto t = time(NULL);
+	const auto tm = mt_localtime(); //localtime_safe(&t);
 	char cs[20];
-	strftime(cs, 20, "%Y_%m", tm);
+	strftime(cs, 20, "%Y_%m", &tm);
 	month = cs;
-	strftime(cs, 20, "%Y_%W", tm);
+	strftime(cs, 20, "%Y_%W", &tm);
 	week = cs;
-	strftime(cs, 20, "%Y_%j", tm);
+	strftime(cs, 20, "%Y_%j", &tm);
 	day = cs;
 }

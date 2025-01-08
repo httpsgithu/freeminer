@@ -1,24 +1,6 @@
-/*
-script/cpp_api/s_item.cpp
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
-
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "cpp_api/s_item.h"
 #include "cpp_api/s_internal.h"
@@ -31,6 +13,10 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 #include "util/pointedthing.h"
 #include "inventory.h"
 #include "inventorymanager.h"
+#include "irrlicht_changes/printing.h"
+
+#define WRAP_LUAERROR(e, detail) \
+	LuaError(std::string(__FUNCTION__) + ": " + (e).what() + ". " detail)
 
 bool ScriptApiItem::item_OnDrop(ItemStack &item,
 		ServerActiveObject *dropper, v3f pos)
@@ -50,49 +36,58 @@ bool ScriptApiItem::item_OnDrop(ItemStack &item,
 	PCALL_RES(lua_pcall(L, 3, 1, error_handler));
 	if (!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L,-1, getServer());
+			item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
 	}
 	lua_pop(L, 2);  // Pop item and error handler
 	return true;
 }
 
-bool ScriptApiItem::item_OnPlace(ItemStack &item,
+bool ScriptApiItem::item_OnPlace(std::optional<ItemStack> &ret_item,
 		ServerActiveObject *placer, const PointedThing &pointed)
 {
 	SCRIPTAPI_PRECHECKHEADER
 
 	int error_handler = PUSH_ERROR_HANDLER(L);
 
+	const ItemStack &item = *ret_item;
 	// Push callback function on stack
 	if (!getItemCallback(item.name.c_str(), "on_place"))
 		return false;
 
 	// Call function
 	LuaItemStack::create(L, item);
-	objectrefGetOrCreate(L, placer);
+
+	if (!placer)
+		lua_pushnil(L);
+	else
+		objectrefGetOrCreate(L, placer);
+
 	pushPointedThing(pointed);
 	PCALL_RES(lua_pcall(L, 3, 1, error_handler));
 	if (!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L,-1, getServer());
+			ret_item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
+	} else {
+		ret_item = std::nullopt;
 	}
 	lua_pop(L, 2);  // Pop item and error handler
 	return true;
 }
 
-bool ScriptApiItem::item_OnUse(ItemStack &item,
+bool ScriptApiItem::item_OnUse(std::optional<ItemStack> &ret_item,
 		ServerActiveObject *user, const PointedThing &pointed)
 {
 	SCRIPTAPI_PRECHECKHEADER
 
 	int error_handler = PUSH_ERROR_HANDLER(L);
 
+	const ItemStack &item = *ret_item;
 	// Push callback function on stack
 	if (!getItemCallback(item.name.c_str(), "on_use"))
 		return false;
@@ -104,36 +99,40 @@ bool ScriptApiItem::item_OnUse(ItemStack &item,
 	PCALL_RES(lua_pcall(L, 3, 1, error_handler));
 	if(!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L,-1, getServer());
+			ret_item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
+	} else {
+		ret_item = std::nullopt;
 	}
 	lua_pop(L, 2);  // Pop item and error handler
 	return true;
 }
 
-bool ScriptApiItem::item_OnSecondaryUse(ItemStack &item, ServerActiveObject *user)
+bool ScriptApiItem::item_OnSecondaryUse(std::optional<ItemStack> &ret_item,
+		ServerActiveObject *user, const PointedThing &pointed)
 {
 	SCRIPTAPI_PRECHECKHEADER
-	
+
 	int error_handler = PUSH_ERROR_HANDLER(L);
-	
+
+	const ItemStack &item = *ret_item;
 	if (!getItemCallback(item.name.c_str(), "on_secondary_use"))
 		return false;
-	
+
 	LuaItemStack::create(L, item);
 	objectrefGetOrCreate(L, user);
-	PointedThing pointed;
-	pointed.type = POINTEDTHING_NOTHING;
 	pushPointedThing(pointed);
 	PCALL_RES(lua_pcall(L, 3, 1, error_handler));
 	if (!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L, -1, getServer());
+			ret_item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
+	} else {
+		ret_item = std::nullopt;
 	}
 	lua_pop(L, 2);  // Pop item and error handler
 	return true;
@@ -162,9 +161,9 @@ bool ScriptApiItem::item_OnCraft(ItemStack &item, ServerActiveObject *user,
 	PCALL_RES(lua_pcall(L, 4, 1, error_handler));
 	if (!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L,-1, getServer());
+			item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
 	}
 	lua_pop(L, 2);  // Pop item and error handler
@@ -175,7 +174,7 @@ bool ScriptApiItem::item_CraftPredict(ItemStack &item, ServerActiveObject *user,
 		const InventoryList *old_craft_grid, const InventoryLocation &craft_inv)
 {
 	SCRIPTAPI_PRECHECKHEADER
-
+	sanity_check(old_craft_grid);
 	int error_handler = PUSH_ERROR_HANDLER(L);
 
 	lua_getglobal(L, "core");
@@ -194,9 +193,9 @@ bool ScriptApiItem::item_CraftPredict(ItemStack &item, ServerActiveObject *user,
 	PCALL_RES(lua_pcall(L, 4, 1, error_handler));
 	if (!lua_isnil(L, -1)) {
 		try {
-			item = read_item(L,-1, getServer());
+			item = read_item(L, -1, getServer()->idef());
 		} catch (LuaError &e) {
-			throw LuaError(std::string(e.what()) + ". item=" + item.name);
+			throw WRAP_LUAERROR(e, "item=" + item.name);
 		}
 	}
 	lua_pop(L, 2);  // Pop item and error handler
@@ -209,7 +208,8 @@ bool ScriptApiItem::item_CraftPredict(ItemStack &item, ServerActiveObject *user,
 // function onto the stack
 // If core.registered_items[name] doesn't exist, core.nodedef_default
 // is tried instead so unknown items can still be manipulated to some degree
-bool ScriptApiItem::getItemCallback(const char *name, const char *callbackname)
+bool ScriptApiItem::getItemCallback(const char *name, const char *callbackname,
+		const v3s16 *p)
 {
 	lua_State* L = getStack();
 
@@ -220,10 +220,12 @@ bool ScriptApiItem::getItemCallback(const char *name, const char *callbackname)
 	lua_getfield(L, -1, name);
 	lua_remove(L, -2); // Remove registered_items
 	// Should be a table
-	if(lua_type(L, -1) != LUA_TTABLE)
-	{
+	if (lua_type(L, -1) != LUA_TTABLE) {
 		// Report error and clean up
-		errorstream << "Item \"" << name << "\" not defined" << std::endl;
+		errorstream << "Item \"" << name << "\" not defined";
+		if (p)
+			errorstream << " at position " << *p;
+		errorstream << std::endl;
 		lua_pop(L, 1);
 
 		// Try core.nodedef_default instead
@@ -240,7 +242,9 @@ bool ScriptApiItem::getItemCallback(const char *name, const char *callbackname)
 	// Should be a function or nil
 	if (lua_type(L, -1) == LUA_TFUNCTION) {
 		return true;
-	} else if (!lua_isnil(L, -1)) {
+	}
+
+	if (!lua_isnil(L, -1)) {
 		errorstream << "Item \"" << name << "\" callback \""
 			<< callbackname << "\" is not a function" << std::endl;
 	}
@@ -248,31 +252,10 @@ bool ScriptApiItem::getItemCallback(const char *name, const char *callbackname)
 	return false;
 }
 
-void ScriptApiItem::pushPointedThing(const PointedThing& pointed)
+void ScriptApiItem::pushPointedThing(const PointedThing &pointed, bool hitpoint)
 {
 	lua_State* L = getStack();
 
-	lua_newtable(L);
-	if(pointed.type == POINTEDTHING_NODE)
-	{
-		lua_pushstring(L, "node");
-		lua_setfield(L, -2, "type");
-		push_v3s16(L, pointed.node_undersurface);
-		lua_setfield(L, -2, "under");
-		push_v3s16(L, pointed.node_abovesurface);
-		lua_setfield(L, -2, "above");
-	}
-	else if(pointed.type == POINTEDTHING_OBJECT)
-	{
-		lua_pushstring(L, "object");
-		lua_setfield(L, -2, "type");
-		objectrefGet(L, pointed.object_id);
-		lua_setfield(L, -2, "ref");
-	}
-	else
-	{
-		lua_pushstring(L, "nothing");
-		lua_setfield(L, -2, "type");
-	}
+	push_pointed_thing(L, pointed, false, hitpoint);
 }
 

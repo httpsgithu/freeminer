@@ -16,10 +16,8 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSI
   set(ENABLE_SYSTEM_MSGPACK 1)
 endif()
 
-
-# msgpack 1.2.0 recompiles all .h every cmake run - it cause recompile all freeminer src.
 if(NOT ENABLE_SYSTEM_MSGPACK AND NOT MSGPACK_LIBRARY)
-	FIND_PATH(MSGPACK_INCLUDE_DIR msgpack.hpp PATHS ${CMAKE_HOME_DIRECTORY}/src/external/msgpack-c/include NO_DEFAULT_PATH)
+	FIND_PATH(MSGPACK_INCLUDE_DIR NAMES msgpack.hpp PATHS ${PROJECT_SOURCE_DIR}/external/msgpack-c/include NO_DEFAULT_PATH)
 	FIND_LIBRARY(MSGPACK_LIBRARY NAMES libmsgpackc.a msgpackc msgpack PATHS ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/src/external/msgpack-c NO_DEFAULT_PATH)
 	IF (MSGPACK_LIBRARY)
 		message(STATUS "Using already compiled bundled msgpack ${MSGPACK_INCLUDE_DIR} ${MSGPACK_LIBRARY}")
@@ -35,7 +33,7 @@ IF (MSGPACK_LIBRARY AND MSGPACK_INCLUDE_DIR)
     SET(MSGPACK_FIND_QUIETLY TRUE) # Already in cache, be silent
 ENDIF ()
 
-FIND_PATH(MSGPACK_INCLUDE_DIR msgpack.hpp)
+FIND_PATH(MSGPACK_INCLUDE_DIR NAMES msgpack.hpp)
 
 FIND_LIBRARY(MSGPACK_LIBRARY NAMES msgpack msgpackc PATHS)
 
@@ -45,17 +43,24 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(msgpack DEFAULT_MSG MSGPACK_LIBRARY MSGPACK_INCLUDE_DIR)
 
 elseif(NOT MSGPACK_LIBRARY)
-	if(NOT MSVC)
-		set(MSGPACK_CXX11 ON)
-	endif()
-	set(MSGPACK_BUILD_EXAMPLES OFF)
-	set(MSGPACK_BUILD_TESTS OFF)
+	set(MSGPACK_CXX14 1 CACHE INTERNAL "")
+	set(MSGPACK_CXX17 1 CACHE INTERNAL "")
+	set(MSGPACK_CXX20 1 CACHE INTERNAL "")
+
+	set(MSGPACK_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+	set(MSGPACK_BUILD_TESTS OFF CACHE INTERNAL "")
+	set(MSGPACK_USE_BOOST 0 CACHE INTERNAL "")
+	set(MSGPACK_USE_STATIC_BOOST 1 CACHE INTERNAL "")
+	set(MSGPACK_BUILD_DOCS 0 CACHE INTERNAL "")
+
+	add_compile_definitions(MSGPACK_NO_BOOST) # should be defined for includes
+
 	if(MSVC)
-	set(MSGPACK_ENABLE_SHARED OFF)
+		set(MSGPACK_ENABLE_SHARED OFF CACHE INTERNAL "")
+		set(GLOBAL MSGPACK_ENABLE_STATIC ON CACHE INTERNAL "")
 	endif()
-	add_subdirectory(external/msgpack-c)
-	#include_directories(${PROJECT_SOURCE_DIR}/external/msgpack-c/include)
-	set(MSGPACK_LIBRARY msgpackc-static) # before 1.4.0 was msgpack-static
+	add_subdirectory(${PROJECT_SOURCE_DIR}/external/msgpack-c)
+	set(MSGPACK_LIBRARY msgpack-cxx)
 	set(MSGPACK_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/external/msgpack-c/include)
 	message(STATUS "Using bundled msgpack ${MSGPACK_INCLUDE_DIR} ${MSGPACK_LIBRARY}")
 endif()

@@ -19,7 +19,8 @@
 #ifndef __FALLINGSAO_H__
 #define __FALLINGSAO_H__
 
-#include "content_sao.h"
+#include "irr_v3d.h"
+#include "server/luaentity_sao.h"
 #include "mapnode.h"
 
 namespace epixel
@@ -27,14 +28,14 @@ namespace epixel
 
 class FallingSAO: public LuaEntitySAO {
 public:
-	FallingSAO(ServerEnvironment *env, v3f pos,
+	FallingSAO(ServerEnvironment *env, v3opos_t pos,
 			const std::string &name, const std::string &state, int fast_ = 2);
 	~FallingSAO();
 
 	ActiveObjectType getType() const
 	{ return ACTIVEOBJECT_TYPE_LUAFALLING; }
 
-	static ServerActiveObject* create(ServerEnvironment *env, v3f pos,
+	static ServerActiveObject* create(ServerEnvironment *env, v3opos_t pos,
 			const std::string &data);
 
 	virtual void addedToEnvironment(u32 dtime_s);

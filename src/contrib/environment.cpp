@@ -17,6 +17,8 @@
 **/
 
 #include "environment.h"
+#include "irr_v3d.h"
+#include "irrlichttypes.h"
 #if 0
 #include "chathandler.h"
 #include "content_sao.h"
@@ -98,7 +100,7 @@ void ServerEnvironment::contrib_globalstep(const float dtime)
 
 	u16 explosion_limit = (m_explosion_queue.size() >= 10 ? 10 : m_explosion_queue.size());
 	for (s16 i = 0; i < explosion_limit && !m_explosion_queue.empty(); i++) {
-		v3s16 pos = m_explosion_queue.front();
+		v3pos_t pos = m_explosion_queue.front();
 		m_explosion_queue.pop_front();
 
 		MapNode n = m_map->getNode(pos);
@@ -118,18 +120,18 @@ void ServerEnvironment::contrib_globalstep(const float dtime)
 
 	// Differed nodeupdates
 	//if (m_nodeupdate_queue.size() > 0) {
-		std::deque<v3s16> nuqueue; 
+		std::deque<nodeUpdatePos> nuqueue; 
 		int i = 0;
 		{
-			std::lock_guard<Mutex> lock(m_nodeupdate_queue_mutex);
+			std::lock_guard<std::mutex> lock(m_nodeupdate_queue_mutex);
 		while(++i < 1000 && !m_nodeupdate_queue.empty()) {nuqueue.emplace_back(m_nodeupdate_queue.front()); m_nodeupdate_queue.pop_front();}
 		}
 		//m_nodeupdate_queue.clear();
-		std::sort(nuqueue.begin(), nuqueue.end());
-		nuqueue.erase(std::unique(nuqueue.begin(), nuqueue.end()), nuqueue.end());
+		//std::sort(nuqueue.begin(), nuqueue.end());
+		//nuqueue.erase(std::unique(nuqueue.begin(), nuqueue.end()), nuqueue.end());
 
-		for (const auto &pos: nuqueue) {
-			nodeUpdate(pos, 10);
+		for (const auto &q: nuqueue) {
+			nodeUpdateReal(q.pos, q.recursion_limit, q.fast, q.destroy);
 		}
 	//}
 }
@@ -165,7 +167,7 @@ void ServerEnvironment::contrib_lookupitemtogather(RemotePlayer* player, v3f pla
 				SimpleSoundSpec spec;
 				spec.name = "item_drop_pickup";
 
-				ServerSoundParams params;
+				ServerPlayingSound params;
 				params.gain = 0.4f;
 				params.to_player = player->getName();
 
@@ -188,11 +190,10 @@ void ServerEnvironment::contrib_lookupitemtogather(RemotePlayer* player, v3f pla
 }
 #endif
 
-epixel::ItemSAO* ServerEnvironment::spawnItemActiveObject(const std::string &itemName,
-		v3f pos, const ItemStack &items)
+std::shared_ptr<epixel::ItemSAO> ServerEnvironment::spawnItemActiveObject(const std::string &itemName,
+		v3opos_t pos, const ItemStack &items)
 {
-	epixel::ItemSAO* obj = new epixel::ItemSAO(this, pos, "__builtin:item", "");
-	if (addActiveObject(obj)) {
+	auto obj = std::make_shared<epixel::ItemSAO>(this, pos, "__builtin:item", "");
 		IItemDefManager* idef = m_gamedef->getItemDefManager();
 		float s = 0.2 + 0.1 * (items.count / items.getStackMax(idef));
 		ObjectProperties* objProps = obj->accessObjectProperties();
@@ -204,21 +205,21 @@ epixel::ItemSAO* ServerEnvironment::spawnItemActiveObject(const std::string &ite
 		objProps->textures.push_back(itemName);
 		objProps->physical = true;
 		objProps->collideWithObjects = false;
-		objProps->visual_size = v2f(s, s);
+		objProps->visual_size = v3f(s, s, s);
 		objProps->collisionbox = core::aabbox3d<f32>(-s,-s,-s,s,s,s);
 		objProps->automatic_rotate = 3.1415 * 0.5;
 		obj->notifyObjectPropertiesModified();
 		obj->attachItems(items);
+	if (addActiveObject(obj)) {
 		return obj;
 	}
-	return nullptr;
+	return {};
 }
 
-epixel::FallingSAO* ServerEnvironment::spawnFallingActiveObject(const std::string &nodeName,
-		v3f pos, const MapNode n, int fast)
+std::shared_ptr<epixel::FallingSAO> ServerEnvironment::spawnFallingActiveObject(const std::string &nodeName,
+		v3opos_t pos, const MapNode& n, int fast)
 {
-	epixel::FallingSAO* obj = new epixel::FallingSAO(this, pos, "__builtin:falling_node", "", fast);
-	if (addActiveObject(obj)) {
+	auto obj = std::make_shared<epixel::FallingSAO>(this, pos, "__builtin:falling_node", "", fast);
 		ObjectProperties* objProps = obj->accessObjectProperties();
 		objProps->is_visible = true;
 		objProps->visual = "wielditem";
@@ -228,9 +229,10 @@ epixel::FallingSAO* ServerEnvironment::spawnFallingActiveObject(const std::strin
 		objProps->collideWithObjects = false;
 		obj->notifyObjectPropertiesModified();
 		obj->attachNode(n);
-		return obj;
-	}
-	return nullptr;
+		if (addActiveObject(obj)) {
+			return obj;
+		}
+		return {};
 }
 
 #if 0
@@ -333,27 +335,28 @@ const u8 ServerEnvironment::getNodeLight(const v3s16 pos)
  * When node is modified, update node and directly
  * linked nodes
  */
-void ServerEnvironment::nodeUpdate(const v3s16 pos, u16 recursion_limit, int fast, bool destroy)
+size_t ServerEnvironment::nodeUpdateReal(const v3pos_t &pos, u8 recursion_limit, u8 fast, bool destroy)
 {
+
 	// Limit nodeUpdate recursion & differ updates to avoid stack overflow
 	if (--recursion_limit <= 0) {
-		std::lock_guard<Mutex> lock(m_nodeupdate_queue_mutex);
-		m_nodeupdate_queue.push_back(pos);
-		return;
+		std::lock_guard<std::mutex> lock(m_nodeupdate_queue_mutex);
+		m_nodeupdate_queue.emplace_back(pos);
+		return 1;
 	}
 
-	INodeDefManager* ndef = m_gamedef->getNodeDefManager();
+	auto* ndef = m_gamedef->getNodeDefManager();
 	MapNode n, n_bottom;
 #if 0
 	ContentFeatures f;
 #endif
 	ItemGroupList groups;
-
+	size_t ret = 0;
 	// update nodes around
-	for (s32 x = pos.X - 1; x <= pos.X + 1; x++) {
-		for (s32 y = pos.Y - 1; y <= pos.Y + 1; y++) {
-			for (s32 z = pos.Z - 1; z <= pos.Z + 1; z++) {
-				v3s16 n_pos = v3s16(x,y,z);
+	for (pos_t x = pos.X - 1; x <= pos.X + 1; x++) {
+		for (pos_t y = pos.Y - 1; y <= pos.Y + 1; y++) {
+			for (pos_t z = pos.Z - 1; z <= pos.Z + 1; z++) {
+				v3pos_t n_pos {x,y,z};
 
 				// If it's current node, ignore
 				if (x == 0 && y == 0 && z == 0) {
@@ -368,19 +371,21 @@ void ServerEnvironment::nodeUpdate(const v3s16 pos, u16 recursion_limit, int fas
 
 				const ContentFeatures &f = ndef->get(n);
 				groups = f.groups;
-				n_bottom = m_map->getNode(v3s16(x, y - 1, z));
+				n_bottom = m_map->getNode(v3pos_t(x, y - 1, z));
 
 				// Check is the node is considered valid to fall
 				if (n_bottom.getContent() != CONTENT_IGNORE && (destroy || itemgroup_get(groups, "falling_node"))) {
 					const ContentFeatures &f_under = ndef->get(n_bottom);
 
 					if ((itemgroup_get(groups, "float") == 0 || f_under.liquid_type == LIQUID_NONE) &&
+						(f_under.liquid_type == LIQUID_NONE || f.liquid_type == LIQUID_NONE) &&
 						(f.name.compare(f_under.name) != 0 || (f_under.leveled &&
 							n_bottom.getLevel(ndef) < n_bottom.getMaxLevel(ndef))) &&
 						(!f_under.walkable || f_under.buildable_to)) {
-						removeNode(n_pos, fast);
-						spawnFallingActiveObject(f.name, intToFloat(v3s16(x,y,z),BS), n, fast);
-						nodeUpdate(n_pos, recursion_limit, fast, destroy);
+						if (spawnFallingActiveObject(f.name, intToFloat(v3pos_t(x,y,z),BS), n, fast)) {
+							removeNode(n_pos, fast, false);
+							ret += 1 + nodeUpdateReal(n_pos, recursion_limit, fast, destroy);
+						}
 					}
 				}
 
@@ -395,6 +400,7 @@ void ServerEnvironment::nodeUpdate(const v3s16 pos, u16 recursion_limit, int fas
 			}
 		}
 	}
+	return ret;
 }
 
 #if 0
@@ -663,9 +669,9 @@ void ServerEnvironment::handleNodeDrops(const ContentFeatures &f, v3f pos, Playe
 
 #endif
 
-bool ServerEnvironment::checkAttachedNode(const v3s16 pos, MapNode n, const ContentFeatures &f)
+bool ServerEnvironment::checkAttachedNode(const v3pos_t pos, MapNode n, const ContentFeatures &f)
 {
-	v3s16 d(0,0,0);
+	v3pos_t d(0,0,0);
 	if (f.param_type_2 == CPT2_WALLMOUNTED) {
 		switch (n.param2) {
 			case 0: d.Y = 1; break;
@@ -684,7 +690,7 @@ bool ServerEnvironment::checkAttachedNode(const v3s16 pos, MapNode n, const Cont
 	bool exists = false;
 */
 	MapNode n2 = m_map->getNode(pos + d);
-	INodeDefManager* ndef = m_gamedef->getNodeDefManager();
+	auto* ndef = m_gamedef->getNodeDefManager();
 	if (n2.getContent() != CONTENT_IGNORE && !ndef->get(n2).walkable) {
 		return false;
 	}

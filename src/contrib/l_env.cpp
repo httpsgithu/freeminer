@@ -17,6 +17,7 @@
 **/
 
 #include "script/lua_api/l_env.h"
+#include "irr_v3d.h"
 #include "script/lua_api/l_internal.h"
 #include "script/lua_api/l_base.h"
 #include "script/common/c_converter.h"
@@ -28,9 +29,9 @@
 #if 0
 #include "contrib/playersao.h"
 #endif
-#include "scripting_game.h"
+//#include "scripting_game.h"
 #include "environment.h"
-#include "content_sao.h"
+//#include "content_sao.h"
 #include "nodedef.h"
 #include "server.h"
 
@@ -56,13 +57,16 @@ int ModApiEnvMod::l_add_creature(lua_State *L)
 
 #endif
 
-int ModApiEnvMod::l_spawn_item_activeobject(lua_State *L)
+int ModApiEnv::l_spawn_item_activeobject(lua_State *L)
 {
 	GET_ENV_PTR;
 	// pos
-	v3f pos = checkFloatPos(L, 1);
+	v3opos_t pos = checkOposPos(L, 1);
 	// item
-	std::string itemstring = lua_tostring(L, 2);
+	//std::string itemstring = lua_tostring(L, 2);
+	ItemStack item = read_item(L, 2,getServer(L)->idef());
+	if(item.empty() || !item.isKnown(getServer(L)->idef()))
+		return 0;
 
 	u16 stacksize = 1;
 	if (lua_isnumber(L, 3)) {
@@ -74,26 +78,28 @@ int ModApiEnvMod::l_spawn_item_activeobject(lua_State *L)
 		v = checkFloatPos(L, 4);
 	}
 
+	/*
 	ItemStack item;
 	item.deSerialize(itemstring);
+	*/
 	item.add(stacksize - 1);
 
 	// Drop item on the floor
-	if (epixel::ItemSAO* obj = env->spawnItemActiveObject(itemstring, pos, item)) {
+	if (auto obj = env->spawnItemActiveObject(item.getItemString(), pos, item)) {
 		obj->setVelocity(v);
 	}
 	return 1;
 }
 
-int ModApiEnvMod::l_spawn_falling_node(lua_State *L)
+int ModApiEnv::l_spawn_falling_node(lua_State *L)
 {
 	GET_ENV_PTR;
 
-	INodeDefManager *ndef = env->getGameDef()->ndef();
+	auto *ndef = env->getGameDef()->ndef();
 
 	// pos
-	v3f pos = checkFloatPos(L, 1);
-	MapNode n = readnode(L, 2, ndef);
+	v3opos_t pos = checkOposPos(L, 1);
+	MapNode n = readnode(L, 2);
 
 	// Drop item on the floor
 	env->spawnFallingActiveObject(ndef->get(n).name, pos, n);
@@ -107,13 +113,13 @@ int ModApiEnvMod::l_spawn_falling_node(lua_State *L)
  *
  * Trigger a node update on selected position
  */
-int ModApiEnvMod::l_nodeupdate(lua_State *L)
+int ModApiEnv::l_nodeupdate(lua_State *L)
 {
 	GET_ENV_PTR;
 
 	// pos
 	v3f pos = checkFloatPos(L, 1);
-	int destroy = luaL_checknumber(L, 2);
+	int destroy = luaL_optnumber(L, 2, 0);
 
 	// Drop item on the floor
 	env->nodeUpdate(floatToInt(pos, BS), 5, 1, destroy);

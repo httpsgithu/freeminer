@@ -22,6 +22,7 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "guiTextInputMenu.h"
 #include "debug.h"
+#include "gui/guiEditBoxWithScrollbar.h"
 #include "serialization.h"
 #include "settings.h"
 #include <string>
@@ -30,9 +31,10 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 #include <IGUIButton.h>
 #include <IGUIStaticText.h>
 #include <IGUIFont.h>
+#include <IVideoDriver.h>
 
 #include "gettext.h"
-#include "intlGUIEditBox.h"
+#include "gui/guiEditBox.h"
 
 GUITextInputMenu::GUITextInputMenu(gui::IGUIEnvironment* env,
 		gui::IGUIElement* parent, s32 id,
@@ -111,7 +113,8 @@ void GUITextInputMenu::regenerateGui(v2u32 screensize)
 		core::rect<s32> rect(0, 0, 300, 30);
 		rect = rect + v2s32(size.X/2-300/2, size.Y/2-30/2-25);
 		gui::IGUIElement *e;
-		e = (gui::IGUIElement *) new gui::intlGUIEditBox(text.c_str(), true, Environment, this, 256, rect);
+		e = (gui::IGUIElement *) new GUIEditBoxWithScrollBar(text.c_str(), true, Environment, this, 256, rect, nullptr/*m_tsrc*/);
+		
 		// e->drop(); TODO: figure out what actually happens here.
 		Environment->setFocus(e);
 
@@ -127,10 +130,9 @@ void GUITextInputMenu::regenerateGui(v2u32 screensize)
 	{
 		core::rect<s32> rect(0, 0, 140, 30);
 		rect = rect + v2s32(size.X/2-140/2, size.Y/2-30/2+25);
-		const wchar_t* text = wgettext("Proceed");
+		const auto text = wstrgettext("Proceed");
 		Environment->addButton(rect, this, 257,
-			text);
-		delete[] text;
+			text.c_str());
 	}
 }
 
@@ -140,7 +142,6 @@ void GUITextInputMenu::drawMenu()
 	if (!skin)
 		return;
 	video::IVideoDriver* driver = Environment->getVideoDriver();
-	
 	video::SColor bgcolor(140,0,0,0);
 	driver->draw2DRectangle(bgcolor, AbsoluteRect, &AbsoluteClippingRect);
 

@@ -15,11 +15,9 @@
   along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef KEY_VALUE_STORAGE_H
-#define KEY_VALUE_STORAGE_H
+#pragma once
 
 #include <string>
-#include "threading/mutex.h"
 
 #include "config.h"
 #if USE_LEVELDB
@@ -27,39 +25,41 @@
 #endif
 #include "exceptions.h"
 #include "json/json.h"
+#include <mutex>
 
-class KeyValueStorage {
+class KeyValueStorage
+{
 public:
 	KeyValueStorage(const std::string &savedir, const std::string &name);
 	~KeyValueStorage();
 	bool open();
 	void close();
 
-	bool put(const std::string & key, const std::string & data);
-	bool put(const std::string & key, const float & data);
-	bool put_json(const std::string & key, const Json::Value & data);
-	bool get(const std::string & key, std::string &data);
-	bool get(const std::string & key, float &data);
-	bool get_json(const std::string & key, Json::Value & data);
-	bool del(const std::string & key);
+	bool put(const std::string &key, const std::string &data);
+	bool put(const std::string &key, const float &data);
+	bool put_json(const std::string &key, const Json::Value &data);
+	bool get(const std::string &key, std::string &data);
+	bool get(const std::string &key, float &data);
+	bool get_json(const std::string &key, Json::Value &data);
+	bool del(const std::string &key);
 	std::string get_error();
 #if USE_LEVELDB
-	leveldb::Iterator* new_iterator();
-	leveldb::DB *db;
+	leveldb::Iterator *new_iterator();
+	leveldb::DB *db{};
 	leveldb::ReadOptions read_options;
 	leveldb::WriteOptions write_options;
-	bool process_status(const leveldb::Status & status, bool reopen = false);
+	bool process_status(const leveldb::Status &status, bool reopen = false);
 #else
-	char *db;
+	char *db {};
 #endif
-	unsigned int repairs = 0;
+	unsigned int repairs {};
 	std::string error;
+
 private:
 	const std::string db_name;
 	std::string fullpath;
-	Json::FastWriter json_writer;
-	Json::Reader json_reader;
-	Mutex mutex;
+	//Json::FastWriter json_writer;
+	//Json::Reader json_reader;
+	Json::CharReaderBuilder json_char_reader_builder;
+	std::mutex mutex;
 };
-
-#endif

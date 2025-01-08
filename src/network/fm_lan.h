@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2016 proller
+Copyright (C) 2016 proller <proler@gmail.com>
 
 This file is part of Freeminer.
 
@@ -17,23 +17,22 @@ You should have received a copy of the GNU General Public License
 along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef FM_LAN_HEADER
-#define FM_LAN_HEADER
+#pragma once
 
+#include <json/value.h>
 #include <string>
 #include <atomic>
-#include "json/json.h"
-#include "../threading/thread_pool.h"
+#include "../threading/thread_vector.h"
 #include "../threading/concurrent_map.h"
 
-
-class lan_adv : public thread_pool {
+class lan_adv : public thread_vector
+{
 public:
-	void * run();
+	void *run();
 
 	lan_adv();
 	void ask();
-	void send_string(std::string str);
+	void send_string(const std::string &str);
 
 	void serve(unsigned short port);
 
@@ -44,6 +43,3 @@ public:
 private:
 	unsigned short server_port = 0;
 };
-
-
-#endif

@@ -10,9 +10,18 @@
 [submodule "src/external/jsoncpp"]
 	path = src/external/jsoncpp
 	url = https://github.com/open-source-parsers/jsoncpp.git
-[submodule "games/pixture"]
-	path = games/pixture
-	url = https://github.com/kaadmy/pixture.git
 [submodule "src/external/msgpack-c"]
 	path = src/external/msgpack-c
 	url = https://github.com/msgpack/msgpack-c.git
+[submodule "src/external/websocketpp"]
+	path = src/external/websocketpp
+	url = https://github.com/zaphoyd/websocketpp.git
+[submodule "src/external/leveldb"]
+	path = src/external/leveldb
+	url = https://github.com/google/leveldb
+[submodule "src/external/snappy"]
+	path = src/external/snappy
+	url = https://github.com/google/snappy
+[submodule "src/external/libtiff"]
+	path = src/external/libtiff
+	url = https://gitlab.com/libtiff/libtiff.git

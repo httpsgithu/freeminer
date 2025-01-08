@@ -1,59 +1,41 @@
-/*
-util/numeric.h
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
+#pragma once
 
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef UTIL_NUMERIC_HEADER
-#define UTIL_NUMERIC_HEADER
-
-#include "basic_macros.h"
-#include "../irrlichttypes.h"
-#include "../irr_v2d.h"
-#include "../irr_v3d.h"
-#include "../irr_aabb3d.h"
+//fm:
 #include <algorithm>
-#include "../threading/mutex.h"
-#include "cpp11_container.h"
-#include <list>
 #include <cmath>
 #include <map>
-#include <vector>
 
+#include "basic_macros.h"
+#include "constants.h"
+#include "irrlichttypes.h"
+#include "irr_v2d.h"
+#include "irr_v3d.h"
+#include "irr_aabb3d.h"
+#include "SColor.h"
+#include <matrix4.h>
+#include <cmath>
+#include <algorithm>
 
-/*
- * This class permits to cache getFacePosition call results
- * This reduces CPU usage and vector calls
- */
-class FacePositionCache
-{
-public:
-	static std::vector<v3s16> getFacePositions(u16 d);
-private:
-	static void generateFacePosition(u16 d);
-	static UNORDERED_MAP<u16, std::vector<v3s16> > m_cache;
-	static Mutex m_cache_mutex;
-};
+#define rangelim(d, min, max) ((d) < (min) ? (min) : ((d) > (max) ? (max) : (d)))
+#define myfloor(x) ((x) < 0.0 ? (int)(x) - 1 : (int)(x))
+// The naive swap performs better than the xor version
+#define SWAP(t, x, y) do { \
+	t temp = x; \
+	x = y; \
+	y = temp; \
+} while (0)
+
+// Maximum radius of a block.  The magic number is
+// sqrt(3.0) / 2.0 in literal form.
+static constexpr const f32 BLOCK_MAX_RADIUS = 0.866025403784f * MAP_BLOCKSIZE * BS;
 
 inline s16 getContainerPos(s16 p, s16 d)
 {
-	return (p>=0 ? p : p-d+1) / d;
+	return (p >= 0 ? p : p - d + 1) / d;
 }
 
 inline v2s16 getContainerPos(v2s16 p, s16 d)
@@ -136,16 +118,6 @@ inline bool isInArea(v3s16 p, v3s16 d)
 	);
 }
 
-#define rangelim(d, min, max) ((d) < (min) ? (min) : ((d)>(max)?(max):(d)))
-#define myfloor(x) ((x) > 0.0 ? (int)(x) : (int)(x) - 1)
-
-// The naive swap performs better than the xor version
-#define SWAP(t, x, y) do { \
-	t temp = x;            \
-	x = y;                 \
-	y = temp;              \
-} while (0)
-
 inline void sortBoxVerticies(v3s16 &p1, v3s16 &p2) {
 	if (p1.X > p2.X)
 		SWAP(s16, p1.X, p2.X);
@@ -155,6 +127,61 @@ inline void sortBoxVerticies(v3s16 &p1, v3s16 &p2) {
 		SWAP(s16, p1.Z, p2.Z);
 }
 
+inline v3s16 componentwise_min(const v3s16 &a, const v3s16 &b)
+{
+	return v3s16(MYMIN(a.X, b.X), MYMIN(a.Y, b.Y), MYMIN(a.Z, b.Z));
+}
+
+inline v3s16 componentwise_max(const v3s16 &a, const v3s16 &b)
+{
+	return v3s16(MYMAX(a.X, b.X), MYMAX(a.Y, b.Y), MYMAX(a.Z, b.Z));
+}
+
+/// @brief Describes a grid with given step, oirginating at (0,0,0)
+struct MeshGrid {
+	u16 cell_size;
+
+	u32 getCellVolume() const { return cell_size * cell_size * cell_size; }
+
+	/// @brief returns coordinate of mesh cell given coordinate of a map block
+	s16 getCellPos(s16 p) const
+	{
+		return (p - (p < 0) * (cell_size - 1)) / cell_size;
+	}
+
+	/// @brief returns position of mesh cell in the grid given position of a map block
+	v3s16 getCellPos(v3s16 block_pos) const
+	{
+		return v3s16(getCellPos(block_pos.X), getCellPos(block_pos.Y), getCellPos(block_pos.Z));
+	}
+
+	/// @brief returns closest step of the grid smaller than p
+	s16 getMeshPos(s16 p) const
+	{
+		return getCellPos(p) * cell_size;
+	}
+
+	/// @brief Returns coordinates of the origin of the grid cell containing p
+	v3s16 getMeshPos(v3s16 p) const
+	{
+		return v3s16(getMeshPos(p.X), getMeshPos(p.Y), getMeshPos(p.Z));
+	}
+
+	/// @brief Returns true if p is an origin of a cell in the grid.
+	bool isMeshPos(v3s16 &p) const
+	{
+		return p.X % cell_size == 0
+				&& p.Y % cell_size == 0
+				&& p.Z % cell_size == 0;
+	}
+
+	/// @brief Returns index of the given offset in a grid cell
+	/// All offset coordinates must be smaller than the size of the cell
+	u16 getOffsetIndex(v3s16 offset) const
+	{
+		return (offset.Z * cell_size + offset.Y) * cell_size + offset.X;
+	}
+};
 
 /** Returns \p f wrapped to the range [-360, 360]
  *
@@ -162,30 +189,10 @@ inline void sortBoxVerticies(v3s16 &p1, v3s16 &p2) {
  *
  *  \note This is also used in cases where degrees wrapped to the range [0, 360]
  *  is innapropriate (e.g. pitch needs negative values)
- *
- *  \internal functionally equivalent -- although precision may vary slightly --
- *  to fmodf((f), 360.0f) however empirical tests indicate that this approach is
- *  faster.
  */
 inline float modulo360f(float f)
 {
-	int sign;
-	int whole;
-	float fraction;
-
-	if (f < 0) {
-		f = -f;
-		sign = -1;
-	} else {
-		sign = 1;
-	}
-
-	whole = f;
-
-	fraction = f - whole;
-	whole %= 360;
-
-	return sign * (whole + fraction);
+	return fmodf(f, 360.0f);
 }
 
 
@@ -195,6 +202,23 @@ inline float wrapDegrees_0_360(float f)
 {
 	float value = modulo360f(f);
 	return value < 0 ? value + 360 : value;
+}
+
+
+/** Returns \p v3f wrapped to the range [0, 360]
+  */
+inline v3f wrapDegrees_0_360_v3f(v3f v)
+{
+	v3f value_v3f;
+	value_v3f.X = modulo360f(v.X);
+	value_v3f.Y = modulo360f(v.Y);
+	value_v3f.Z = modulo360f(v.Z);
+
+	// Now that values are wrapped, use to get values for certain ranges
+	value_v3f.X = value_v3f.X < 0 ? value_v3f.X + 360 : value_v3f.X;
+	value_v3f.Y = value_v3f.Y < 0 ? value_v3f.Y + 360 : value_v3f.Y;
+	value_v3f.Z = value_v3f.Z < 0 ? value_v3f.Z + 360 : value_v3f.Z;
+	return value_v3f;
 }
 
 
@@ -216,6 +240,18 @@ u32 myrand();
 void mysrand(unsigned int seed);
 void myrand_bytes(void *out, size_t len);
 int myrand_range(int min, int max);
+float myrand_range(float min, float max);
+float myrand_float();
+
+// Implements a C++11 UniformRandomBitGenerator using the above functions
+struct MyRandGenerator {
+	typedef u32 result_type;
+	static constexpr result_type min() { return 0; }
+	static constexpr result_type max() { return MYRAND_RANGE; }
+	inline result_type operator()() {
+		return myrand();
+	}
+};
 
 /*
 	Miscellaneous functions
@@ -248,6 +284,8 @@ u64 murmur_hash_64_ua(const void *key, int len, unsigned int seed);
 bool isBlockInSight(v3s16 blockpos_b, v3f camera_pos, v3f camera_dir,
 		f32 camera_fov, f32 range, f32 *distance_ptr=NULL);
 
+s16 adjustDist(s16 dist, float zoom_fov);
+
 /*
 	Returns nearest 32-bit integer for given floating point number.
 	<cmath> and <math.h> in VC++ don't provide round().
@@ -257,16 +295,56 @@ inline s32 myround(f32 f)
 	return (s32)(f < 0.f ? (f - 0.5f) : (f + 0.5f));
 }
 
+inline constexpr f32 sqr(f32 f)
+{
+	return f * f;
+}
+
 /*
 	Returns integer position of node in given floating point position
 */
 inline v3s16 floatToInt(v3f p, f32 d)
 {
-	v3s16 p2(
-		(p.X + (p.X>0 ? d/2 : -d/2))/d,
-		(p.Y + (p.Y>0 ? d/2 : -d/2))/d,
-		(p.Z + (p.Z>0 ? d/2 : -d/2))/d);
-	return p2;
+	return v3s16(
+		(p.X + (p.X > 0 ? d / 2 : -d / 2)) / d,
+		(p.Y + (p.Y > 0 ? d / 2 : -d / 2)) / d,
+		(p.Z + (p.Z > 0 ? d / 2 : -d / 2)) / d);
+}
+
+/*
+	Returns integer position of node in given double precision position
+ */
+inline v3s16 doubleToInt(v3d p, double d)
+{
+	return v3s16(
+		(p.X + (p.X > 0 ? d / 2 : -d / 2)) / d,
+		(p.Y + (p.Y > 0 ? d / 2 : -d / 2)) / d,
+		(p.Z + (p.Z > 0 ? d / 2 : -d / 2)) / d);
+}
+
+inline v3pos_t doubleToPos(v3d p, double d)
+{
+	return v3pos_t(
+		(p.X + (p.X > 0 ? d / 2 : -d / 2)) / d,
+		(p.Y + (p.Y > 0 ? d / 2 : -d / 2)) / d,
+		(p.Z + (p.Z > 0 ? d / 2 : -d / 2)) / d);
+}
+
+inline v3pos_t floatToInt(v3d p, f32 d)
+{
+	return v3pos_t(
+		(p.X + (p.X > 0 ? d / 2 : -d / 2)) / d,
+		(p.Y + (p.Y > 0 ? d / 2 : -d / 2)) / d,
+		(p.Z + (p.Z > 0 ? d / 2 : -d / 2)) / d);
+}
+
+
+inline v3pos_t oposToPos(v3opos_t p, double d)
+{
+	return v3pos_t(
+		(p.X + (p.X > 0 ? d / 2 : -d / 2)) / d,
+		(p.Y + (p.Y > 0 ? d / 2 : -d / 2)) / d,
+		(p.Z + (p.Z > 0 ? d / 2 : -d / 2)) / d);
 }
 
 /*
@@ -274,45 +352,123 @@ inline v3s16 floatToInt(v3f p, f32 d)
 */
 inline v3f intToFloat(v3s16 p, f32 d)
 {
-	v3f p2(
+	return v3f(
 		(f32)p.X * d,
 		(f32)p.Y * d,
 		(f32)p.Z * d
 	);
-	return p2;
 }
+
+#if USE_OPOS64 || USE_POS32
+inline v3opos_t intToFloat(const v3pos_t & p, const opos_t d)
+{
+	return v3opos_t(
+		(opos_t)p.X * d,
+		(opos_t)p.Y * d,
+		(opos_t)p.Z * d
+	);
+}
+#endif
+
+inline v3f posToFloat(const v3pos_t & p, f32 d)
+{
+	return v3f(
+		(f32)p.X * d,
+		(f32)p.Y * d,
+		(f32)p.Z * d
+	);
+}
+
+inline v3opos_t posToOpos(const v3pos_t & p, const opos_t d)
+{
+	return v3opos_t(
+		(opos_t)p.X * d,
+		(opos_t)p.Y * d,
+		(opos_t)p.Z * d
+	);
+}
+
+inline v3opos_t v3fToOpos(const v3f & p)
+{
+	return v3opos_t(p.X, p.Y, p.Z);
+}
+
+inline v3f oposToV3f(const v3opos_t & p)
+{
+	return v3f(p.X, p.Y, p.Z);
+}
+
+ /*
+inline v3f intToFloat(v3bpos_t p, f32 d)
+{
+	return v3f(
+		(f32)p.X * d,
+		(f32)p.Y * d,
+		(f32)p.Z * d
+	);
+}
+ */
+
+inline v3s16 posToS16(const v3pos_t & p)
+{
+#if USE_POS32
+	return v3s16(p.X, p.Y, p.Z);
+#else
+	return p;
+#endif
+}
+
+inline v3pos_t s16ToPos(const v3s16 & p)
+{
+#if USE_POS32
+	return v3pos_t(p.X, p.Y, p.Z);
+#else
+	return p;
+#endif
+}
+
 
 // Random helper. Usually d=BS
 inline aabb3f getNodeBox(v3s16 p, float d)
 {
 	return aabb3f(
-		(float)p.X * d - 0.5*d,
-		(float)p.Y * d - 0.5*d,
-		(float)p.Z * d - 0.5*d,
-		(float)p.X * d + 0.5*d,
-		(float)p.Y * d + 0.5*d,
-		(float)p.Z * d + 0.5*d
+		(float)p.X * d - 0.5f * d,
+		(float)p.Y * d - 0.5f * d,
+		(float)p.Z * d - 0.5f * d,
+		(float)p.X * d + 0.5f * d,
+		(float)p.Y * d + 0.5f * d,
+		(float)p.Z * d + 0.5f * d
 	);
 }
+
+#if USE_OPOS64
+inline aabb3o getNodeBox(v3pos_t p, opos_t d)
+{
+	return aabb3o(
+		(opos_t)p.X * d - 0.5f * d,
+		(opos_t)p.Y * d - 0.5f * d,
+		(opos_t)p.Z * d - 0.5f * d,
+		(opos_t)p.X * d + 0.5f * d,
+		(opos_t)p.Y * d + 0.5f * d,
+		(opos_t)p.Z * d + 0.5f * d
+	);
+}
+#endif
 
 class IntervalLimiter
 {
 public:
-	IntervalLimiter():
-		m_accumulator(0)
-	{
-	}
-	/*
-		dtime: time from last call to this method
-		wanted_interval: interval wanted
-		return value:
-			true: action should be skipped
-			false: action should be done
+	IntervalLimiter() = default;
+
+	/**
+		@param dtime time from last call to this method
+		@param wanted_interval interval wanted
+		@return true if action should be done
 	*/
 	bool step(float dtime, float wanted_interval)
 	{
 		m_accumulator += dtime;
-		if(m_accumulator < wanted_interval)
+		if (m_accumulator < wanted_interval)
 			return false;
 		m_accumulator -= wanted_interval;
 		if (m_accumulator > wanted_interval*2)
@@ -322,9 +478,11 @@ public:
 	void run_next(float wanted_interval) {
 		m_accumulator = wanted_interval;
 	}
-protected:
-	float m_accumulator;
+
+private:
+	float m_accumulator = 0.0f;
 };
+
 
 /*
 	Splits a list into "pages". For example, the list [1,2,3,4,5] split
@@ -341,29 +499,21 @@ protected:
 */
 inline void paging(u32 length, u32 page, u32 pagecount, u32 &minindex, u32 &maxindex)
 {
-	if(length < 1 || pagecount < 1 || page < 1 || page > pagecount)
-	{
+	if (length < 1 || pagecount < 1 || page < 1 || page > pagecount) {
 		// Special cases or invalid parameters
 		minindex = maxindex = 0;
-	}
-	else if(pagecount <= length)
-	{
+	} else if(pagecount <= length) {
 		// Less pages than entries in the list:
 		// Each page contains at least one entry
 		minindex = (length * (page-1) + (pagecount-1)) / pagecount;
 		maxindex = (length * page + (pagecount-1)) / pagecount;
-	}
-	else
-	{
+	} else {
 		// More pages than entries in the list:
 		// Make sure the empty pages are at the end
-		if(page < length)
-		{
+		if (page < length) {
 			minindex = page-1;
 			maxindex = page;
-		}
-		else
-		{
+		} else {
 			minindex = 0;
 			maxindex = 0;
 		}
@@ -372,22 +522,30 @@ inline void paging(u32 length, u32 page, u32 pagecount, u32 &minindex, u32 &maxi
 
 inline float cycle_shift(float value, float by = 0, float max = 1)
 {
-    if (value + by < 0) return max + by + value;
+    if (value + by < 0)   return value + by + max;
     if (value + by > max) return value + by - max;
     return value + by;
 }
 
-inline int radius_box(const v3s16 & a, const v3s16 & b) {
-	return std::max(std::max(std::abs((float)a.X - b.X), std::abs((float)a.Y - b.Y)), std::abs((float)a.Z - b.Z));
+inline unsigned int radius_box(const v3pos_t &a, const v3pos_t &b)
+{
+	return std::max({std::abs((float)a.X - b.X), std::abs((float)a.Y - b.Y), std::abs((float)a.Z - b.Z)});
 }
 
-inline int radius_box(const v3f & a, const v3f & b) {
-	return std::max(std::max(std::fabs(a.X - b.X), std::fabs(a.Y - b.Y)), std::fabs(a.Z - b.Z));
+/*
+inline int radius_box(const v3bpos_t & a, const v3bpos_t & b) {
+	return std::max([std::abs((float)a.X - b.X), std::abs((float)a.Y - b.Y), std::abs((float)a.Z - b.Z)});
+}
+*/
+
+inline unsigned int radius_box(const v3opos_t &a, const v3opos_t &b)
+{
+	return std::max({std::fabs(a.X - b.X), std::fabs(a.Y - b.Y), std::fabs(a.Z - b.Z)});
 }
 
 inline bool is_power_of_two(u32 n)
 {
-	return n != 0 && (n & (n-1)) == 0;
+	return n != 0 && (n & (n - 1)) == 0;
 }
 
 // Compute next-higher power of 2 efficiently, e.g. for power-of-2 texture sizes.
@@ -402,4 +560,76 @@ inline u32 npot2(u32 orig) {
 	return orig + 1;
 }
 
-#endif
+// Distance between two values in a wrapped (circular) system
+template<typename T>
+inline unsigned wrappedDifference(T a, T b, const T maximum)
+{
+	if (a > b)
+		std::swap(a, b);
+	// now b >= a
+	unsigned s = b - a, l = static_cast<unsigned>(maximum - b) + a + 1;
+	return std::min(s, l);
+}
+
+// Gradual steps towards the target value in a wrapped (circular) system
+// using the shorter of both ways
+template<typename T>
+inline void wrappedApproachShortest(T &current, const T target, const T stepsize,
+	const T maximum)
+{
+	T delta = target - current;
+	if (delta < 0)
+		delta += maximum;
+
+	if (delta > stepsize && maximum - delta > stepsize) {
+		current += (delta < maximum / 2) ? stepsize : -stepsize;
+		if (current >= maximum)
+			current -= maximum;
+	} else {
+		current = target;
+	}
+}
+
+void setPitchYawRollRad(core::matrix4 &m, v3f rot);
+
+inline void setPitchYawRoll(core::matrix4 &m, v3f rot)
+{
+	setPitchYawRollRad(m, rot * core::DEGTORAD);
+}
+
+v3f getPitchYawRollRad(const core::matrix4 &m);
+
+inline v3f getPitchYawRoll(const core::matrix4 &m)
+{
+	return getPitchYawRollRad(m) * core::RADTODEG;
+}
+
+// Muliply the RGB value of a color linearly, and clamp to black/white
+inline irr::video::SColor multiplyColorValue(const irr::video::SColor &color, float mod)
+{
+	return irr::video::SColor(color.getAlpha(),
+			core::clamp<u32>(color.getRed() * mod, 0, 255),
+			core::clamp<u32>(color.getGreen() * mod, 0, 255),
+			core::clamp<u32>(color.getBlue() * mod, 0, 255));
+}
+
+template <typename T> inline T numericAbsolute(T v) { return v < 0 ? T(-v) : v;                }
+template <typename T> inline T numericSign(T v)     { return T(v < 0 ? -1 : (v == 0 ? 0 : 1)); }
+
+inline v3f vecAbsolute(v3f v)
+{
+	return v3f(
+		numericAbsolute(v.X),
+		numericAbsolute(v.Y),
+		numericAbsolute(v.Z)
+	);
+}
+
+inline v3f vecSign(v3f v)
+{
+	return v3f(
+		numericSign(v.X),
+		numericSign(v.Y),
+		numericSign(v.Z)
+	);
+}

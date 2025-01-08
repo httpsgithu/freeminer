@@ -15,8 +15,7 @@ You should have received a copy of the GNU General Public License
 along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef THREADING_LOCK_HEADER
-#define THREADING_LOCK_HEADER
+#pragma once
 
 #include <mutex>
 #include <atomic>
@@ -25,19 +24,19 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "../config.h"
 
-#ifdef _WIN32
 
-#include "../threading/mutex.h"
-using use_mutex = Mutex;
+using use_mutex = std::mutex;
+
+/*
+#ifdef _WIN32
+using use_mutex = std::mutex;
 using try_shared_mutex = use_mutex;
-using try_shared_lock = std::unique_lock<try_shared_mutex>;
+using maybe_shared_lock = std::unique_lock<try_shared_mutex>;
 using unique_lock = std::unique_lock<try_shared_mutex>;
 const auto try_to_lock = std::try_to_lock;
-
 #else
 
 typedef std::mutex use_mutex;
-
 
 #if USE_BOOST // not finished
 
@@ -45,31 +44,34 @@ typedef std::mutex use_mutex;
 #include <boost/thread.hpp>
 //#include <boost/thread/locks.hpp>
 typedef boost::shared_mutex try_shared_mutex;
-typedef boost::shared_lock<try_shared_mutex> try_shared_lock;
+typedef boost::shared_lock<try_shared_mutex> maybe_shared_lock;
 typedef boost::unique_lock<try_shared_mutex> unique_lock;
 const auto try_to_lock = boost::try_to_lock;
 #define LOCK_TWO 1
 
 #elif HAVE_SHARED_MUTEX
 //#elif __cplusplus >= 201305L
+*/
+
 
 #include <shared_mutex>
-using try_shared_mutex = std::shared_timed_mutex;
-using try_shared_lock = std::shared_lock<try_shared_mutex>;
+using try_shared_mutex = std::shared_mutex;
+using maybe_shared_lock = std::shared_lock<try_shared_mutex>;
 using unique_lock = std::unique_lock<try_shared_mutex>;
 const auto try_to_lock = std::try_to_lock;
 #define LOCK_TWO 1
 
+/*
 #else
 
 using try_shared_mutex = use_mutex;
-using try_shared_lock = std::unique_lock<try_shared_mutex> ;
-using unique_lock = std::unique_lock<try_shared_mutex> ;
+using maybe_shared_lock = std::unique_lock<try_shared_mutex>;
+using unique_lock = std::unique_lock<try_shared_mutex>;
 const auto try_to_lock = std::try_to_lock;
 #endif
 
 #endif
-
+*/
 
 // http://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
 /* uncomment when need
@@ -97,61 +99,65 @@ public:
 };
 */
 
-template<class GUARD, class MUTEX = use_mutex>
-class recursive_lock {
+template <class GUARD, class MUTEX = use_mutex>
+class recursive_lock
+{
 public:
-	GUARD * lock;
-	std::atomic<std::size_t> & thread_id;
-	recursive_lock(MUTEX & mtx, std::atomic<std::size_t> & thread_id_, bool try_lock = false);
+	GUARD *lock;
+	std::atomic<std::size_t> &thread_id;
+	recursive_lock(
+			MUTEX &mtx, std::atomic<std::size_t> &thread_id_, bool try_lock = false);
 	~recursive_lock();
 	bool owns_lock();
 	void unlock();
 };
 
-template<class mutex = use_mutex, class uniquelock = std::unique_lock<mutex> , class sharedlock = std::unique_lock<mutex> >
-class locker {
+template <class mutex = use_mutex, class unique_lock = std::unique_lock<mutex>,
+		class shared_lock = std::unique_lock<mutex>>
+class locker
+{
 public:
-	typedef recursive_lock<sharedlock, mutex> lock_rec_shared;
-	typedef recursive_lock<uniquelock, mutex> lock_rec_unique;
+	using lock_rec_shared = recursive_lock<shared_lock, mutex>;
+	using lock_rec_unique = recursive_lock<unique_lock, mutex>;
 
 	mutable mutex mtx;
 	mutable std::atomic<std::size_t> thread_id;
 
 	locker();
-	std::unique_ptr<uniquelock> lock_unique();
-	std::unique_ptr<uniquelock> try_lock_unique();
-	std::unique_ptr<sharedlock> lock_shared();
-	std::unique_ptr<sharedlock> try_lock_shared();
-	std::unique_ptr<lock_rec_unique> lock_unique_rec();
-	std::unique_ptr<lock_rec_unique> try_lock_unique_rec();
-	//std::unique_ptr<lock_rec_shared> lock_shared_rec();
+	std::unique_ptr<unique_lock> lock_unique() const;
+	std::unique_ptr<unique_lock> try_lock_unique() const;
+	std::unique_ptr<shared_lock> lock_shared() const;
+	std::unique_ptr<shared_lock> try_lock_shared() const;
+	std::unique_ptr<lock_rec_unique> lock_unique_rec() const;
+	std::unique_ptr<lock_rec_unique> try_lock_unique_rec() const;
 	std::unique_ptr<lock_rec_shared> lock_shared_rec() const;
-	std::unique_ptr<lock_rec_shared> try_lock_shared_rec();
+	std::unique_ptr<lock_rec_shared> try_lock_shared_rec() const;
 };
 
-using shared_locker = locker<try_shared_mutex, unique_lock, try_shared_lock>;
+using shared_locker = locker<try_shared_mutex, unique_lock, maybe_shared_lock>;
 
-class dummy_lock {
+class dummy_lock
+{
 public:
-	~dummy_lock() {}; //no unused variable warning
-	bool owns_lock() {return true;}
-	bool operator!() {return true;}
-	dummy_lock * operator->() {return this; }
+	~dummy_lock(){}; //no unused variable warning
+	bool owns_lock() { return true; }
+	bool operator!() { return true; }
+	dummy_lock *operator->() { return this; }
 	void unlock() {};
 };
 
-class dummy_locker {
+class dummy_locker
+{
 public:
-	dummy_lock lock_unique() { return dummy_lock(); };
-	dummy_lock try_lock_unique() { return dummy_lock(); };
-	dummy_lock lock_shared() { return dummy_lock(); };
-	dummy_lock try_lock_shared() { return dummy_lock(); };
-	dummy_lock lock_unique_rec() { return dummy_lock(); };
-	dummy_lock try_lock_unique_rec() { return dummy_lock(); };
-	dummy_lock lock_shared_rec() { return dummy_lock(); };
-	dummy_lock try_lock_shared_rec() { return dummy_lock(); };
+	dummy_lock lock_unique() const { return {}; };
+	dummy_lock try_lock_unique() const { return {}; };
+	dummy_lock lock_shared() const { return {}; };
+	dummy_lock try_lock_shared() const { return {}; };
+	dummy_lock lock_unique_rec() const { return {}; };
+	dummy_lock try_lock_unique_rec() const { return {}; };
+	dummy_lock lock_shared_rec() const { return {}; };
+	dummy_lock try_lock_shared_rec() const { return {}; };
 };
-
 
 #if ENABLE_THREADS
 
@@ -165,112 +171,24 @@ using maybe_shared_locker = dummy_locker;
 
 #endif
 
-
-/*
-Not used, but uncomment if you need
-also rename to concurrent_vector.h
-
-#include <vector>
-
-
-template <class T, class Allocator = std::allocator<T> >
-class shared_vector :
-	public std::vector<T, Allocator>,
-	public locker<>
-{
-public:
-	typedef typename std::vector<T, Allocator>           full_type;
-    typedef T                                        value_type;
-    typedef Allocator                                allocator_type;
-    typedef typename full_type::reference       reference;
-    typedef typename full_type::const_reference const_reference;
-    typedef typename full_type::size_type       size_type;
-    typedef typename full_type::pointer         pointer;
-    typedef typename full_type::const_pointer   const_pointer;
-
-	typedef typename full_type::const_iterator                         const_iterator;
-	typedef typename full_type::iterator                               iterator;
-
-
-	bool      empty() {
-		auto lock = lock_shared_rec();
-		return full_type::empty();
+#define LOCK_PROXY(CLASS, METHOD, LOCK)                                                  \
+	template <typename... Args>                                                          \
+	decltype(auto) METHOD(Args &&...args)                                                \
+	{                                                                                    \
+		const auto lock = LOCK();                                                        \
+		return CLASS::METHOD(std::forward<Args>(args)...);                               \
 	}
 
-	size_type size() {
-		auto lock = lock_shared_rec();
-		return full_type::size();
-	}
+#define LOCK_UNIQUE_PROXY(CLASS, METHOD)                                                 \
+	LOCK_PROXY(CLASS, METHOD, LOCKER::lock_unique_rec)
+#define LOCK_SHARED_PROXY(CLASS, METHOD)                                                 \
+	LOCK_PROXY(CLASS, METHOD, LOCKER::lock_shared_rec)
 
-	reference       operator[](size_type n) {
-		auto lock = lock_unique_rec();
-		return full_type::operator[](n);
-	};
-
-	const_reference operator[](size_type n) const {
-		auto lock = lock_shared_rec();
-		return full_type::operator[](n);
-	};
-
-	void resize(size_type sz) {
-		auto lock = lock_unique_rec();
-		return full_type::resize(sz);
-	};
-
-	void clear() {
-		auto lock = lock_unique_rec();
-		return full_type::clear();
-	};
-
-	void push_back(const value_type& x) {
-		auto lock = lock_unique_rec();
-		return full_type::push_back(x);
-	};
-
-	void push_back(value_type&& x) {
-		auto lock = lock_unique_rec();
-		return full_type::push_back(x);
-	};
-
-};
-
-
-#if ENABLE_THREADS
-
-template <class T, class Allocator = std::allocator<T> >
-class maybe_shared_vector : public shared_vector<T, Allocator>
-{};
-
-#else
-
-template <class T, class Allocator = std::allocator<T> >
-class not_shared_vector :
-	public std::vector<T, Allocator>,
-	public dummy_locker
-{
-public:
-	typedef typename std::vector<T, Alloc>           full_type;
-	typedef T                                        key_type;
-	typedef T                                        mapped_type;
-    typedef T                                        value_type;
-
-	mapped_type& get(size_type n) {
-		return full_type::operator[](k);
-	}
-
-	void set(size_type n, const mapped_type& v) {
-		full_type::operator[](n) = v;
-	}
-};
-
-template <class T, class Allocator = std::allocator<T> >
-class maybe_shared_vector: public not_shared_vector<Key, Allocator>
-{};
-
-#endif
-
-*/
-
-
-
-#endif
+#define WITH_UNIQUE_LOCK(LOCK) if (const auto lock___ = std::unique_lock(LOCK); true)
+#define WITH_SHARED_LOCK(LOCK) if (const auto lock___ = std::shared_lock(LOCK); true)
+#define TRY_UNIQUE_LOCK(LOCK)                                                            \
+	if (const auto lock___ = std::unique_lock(LOCK, std::try_to_lock);                   \
+			lock___.owns_lock())
+#define TRY_SHARED_LOCK(LOCK)                                                            \
+	if (const auto lock___ = std::shared_lock(LOCK, std::try_to_lock);                   \
+			lock___.owns_lock())

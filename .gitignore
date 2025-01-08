@@ -1,5 +1,8 @@
 ## Editors and development environments
 *~
+.cmake
+CMakeUserPresets.json
+Testing/*
 *.swp
 *.bak*
 *.orig
@@ -23,13 +26,28 @@ tags
 !tags/
 gtags.files
 .idea
+.qtcreator/
 # Codelite
 *.project
 # Visual Studio Code & plugins
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 build/.cmake/
+# Fleet
+.fleet
 # Gradle
 .gradle
+# Clang
+.cache
+# AppImage
+*.AppImage
+*.zsync
+appimage-build
+AppDir
+# Direnv
+.direnv/
+# Nix
+/result
 
 ## Files related to Minetest development cycle
 /*.patch
@@ -41,20 +59,21 @@ build/.cmake/
 /bin/
 /games/*
 !/games/devtest/
+/games/devtest/mods/soundstuff/sounds/gitignored_sounds/*
+!/games/devtest/mods/soundstuff/sounds/gitignored_sounds/custom_sounds_here.txt
 /cache
 /textures/*
 !/textures/base/
 /screenshots
 /sounds
 /mods/*
-!/mods/minetest/
-/mods/minetest/*
-!/mods/minetest/mods_here.txt
-/worlds
-/world/
+!/mods/mods_here.txt
+/worlds/*
+!/worlds/worlds_here.txt
 /clientmods/*
 !/clientmods/preview/
 /client/mod_storage/
+/mod_data
 
 ## Configuration/log files
 minetest.conf
@@ -83,24 +102,26 @@ cmake_install.cmake
 CMakeCache.txt
 CPackConfig.cmake
 CPackSourceConfig.cmake
-src/test_config.h
 src/cmake_config.h
 src/cmake_config_githash.h
-src/unittest/test_world/world.mt
-games/devtest/mods/testnodes/textures/testnodes_generated_*.png
 /locale/
 .directory
 *.cbp
 *.layout
 *.o
 *.a
+*.dump
+*.dmp
 *.ninja
 .ninja*
 *.gch
 *.iml
 test_config.h
 cmake-build-debug/
+cmake-build-minsizerel/
 cmake-build-release/
+cmake-build-relwithdebinfo/
+cmake-build-default/
 cmake_config.h
 cmake_config_githash.h
 CMakeDoxy*
@@ -125,9 +146,16 @@ build/android/.gradle
 
 freeminer.conf
 auto_*
+build_a*
+build_t*
+build_d*
+build_m*
+build_-*
+
 util/autotest/logs.*
 util/autotest/auto.json
-util/autotest/world
+util/autotest/world*
+util/autotest/screenshot*
 client/favoriteservers.json
 client/servers_public.json
 
@@ -150,7 +178,7 @@ build_tools/android_fm/path.cfg
 
 timestamp
 
-# Optional user provided library folder
+# Old irrlichtmt. Still ignored to make bisecting easier.
 lib/irrlichtmt
 
 # Generated mod storage database

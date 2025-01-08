@@ -21,7 +21,6 @@
 #include "nodedef.h"
 #include "mapblock.h"
 #include "mapnode.h"
-#include "scripting_game.h"
 #include "map.h"
 #include "serialization.h"
 #include "settings.h"
@@ -36,12 +35,10 @@
 #include <sstream>
 #include <fstream>
 
-#define PP(x) ((x).X)<<" "<<((x).Y)<<" "<<((x).Z)<<" "
-
 const u32 Circuit::circuit_simulator_version = 1;
 const char Circuit::elements_states_file[] = "circuit_elements_states";
 
-Circuit::Circuit(GameScripting* script, Map* map, INodeDefManager* ndef, std::string savedir) :
+Circuit::Circuit(ServerScripting* script, Map* map, const NodeDefManager* ndef, const std::string & savedir) :
 	m_script(script),
 	m_map(map),
 	m_ndef(ndef),
@@ -97,7 +94,7 @@ void Circuit::addBlock(MapBlock* block) {
 	// }
 }
 
-void Circuit::addNode(v3POS pos) {
+void Circuit::addNode(v3pos_t pos) {
 	MapNode n = m_map->getNode(pos);
 	const ContentFeatures& node_f = m_ndef->get(n);
 	if(node_f.is_wire || node_f.is_wire_connector) {
@@ -109,7 +106,7 @@ void Circuit::addNode(v3POS pos) {
 	}
 }
 
-void Circuit::removeNode(v3POS pos, const MapNode& n_old) {
+void Circuit::removeNode(v3pos_t pos, const MapNode& n_old) {
 	if(m_ndef->get(n_old).is_wire || m_ndef->get(n_old).is_wire_connector) {
 		removeWire(pos);
 	}
@@ -118,7 +115,7 @@ void Circuit::removeNode(v3POS pos, const MapNode& n_old) {
 	}
 }
 
-void Circuit::swapNode(v3POS pos, const MapNode& n_old, const MapNode& n_new) {
+void Circuit::swapNode(v3pos_t pos, const MapNode& n_old, const MapNode& n_new) {
 	const ContentFeatures& n_old_f = m_ndef->get(n_old);
 	const ContentFeatures& n_new_f = m_ndef->get(n_new);
 	if(n_new_f.is_circuit_element) {
@@ -142,8 +139,8 @@ void Circuit::swapNode(v3POS pos, const MapNode& n_old, const MapNode& n_new) {
 	}
 }
 
-void Circuit::addElement(v3POS pos) {
-	auto lock = m_elements_mutex.lock_unique_rec();
+void Circuit::addElement(v3pos_t pos) {
+	const auto lock = m_elements_mutex.lock_unique_rec();
 
 	bool already_existed[6];
 	bool connected_faces[6] = {0};
@@ -207,8 +204,8 @@ void Circuit::addElement(v3POS pos) {
 
 }
 
-void Circuit::removeElement(v3POS pos) {
-	auto lock = m_elements_mutex.lock_unique_rec();
+void Circuit::removeElement(v3pos_t pos) {
+	const auto lock = m_elements_mutex.lock_unique_rec();
 
 	std::vector <std::list <CircuitElementVirtual>::iterator> virtual_elements_for_update;
 	std::list <CircuitElement>::iterator current_element = m_pos_to_iterator[pos];
@@ -237,8 +234,8 @@ void Circuit::removeElement(v3POS pos) {
 	m_pos_to_iterator.erase(pos);
 }
 
-void Circuit::addWire(v3POS pos) {
-	auto lock = m_elements_mutex.lock_unique_rec();
+void Circuit::addWire(v3pos_t pos) {
+	const auto lock = m_elements_mutex.lock_unique_rec();
 
 	// This is used for converting elements of current_face_connected to their ids in all_connected.
 	std::vector <std::pair <std::list <CircuitElement>::iterator, u8> > all_connected;
@@ -317,8 +314,8 @@ void Circuit::addWire(v3POS pos) {
 	}
 }
 
-void Circuit::removeWire(v3POS pos) {
-	auto lock = m_elements_mutex.lock_unique_rec();
+void Circuit::removeWire(v3pos_t pos) {
+	const auto lock = m_elements_mutex.lock_unique_rec();
 
 	std::vector <std::pair <std::list <CircuitElement>::iterator, u8> > current_face_connected;
 
@@ -386,7 +383,7 @@ void Circuit::removeWire(v3POS pos) {
 
 void Circuit::update(float dtime) {
 	if(m_since_last_update > m_min_update_delay) {
-		auto lock = m_elements_mutex.lock_unique_rec();
+		const auto lock = m_elements_mutex.lock_unique_rec();
 		m_since_last_update -= m_min_update_delay;
 		// Each element send signal to other connected virtual elements.
 		bool is_map_loaded = true;
@@ -424,8 +421,8 @@ void Circuit::update(float dtime) {
 }
 
 
-void Circuit::swapElement(const MapNode& n_old, const MapNode& n_new, v3POS pos) {
-	auto lock = m_elements_mutex.lock_unique_rec();
+void Circuit::swapElement(const MapNode& n_old, const MapNode& n_new, v3pos_t pos) {
+	const auto lock = m_elements_mutex.lock_unique_rec();
 
 	const ContentFeatures& n_old_features = m_ndef->get(n_old);
 	const ContentFeatures& n_new_features = m_ndef->get(n_new);
@@ -513,7 +510,7 @@ void Circuit::load() {
 }
 
 void Circuit::save() {
-	auto lock = m_elements_mutex.lock_shared_rec();
+	const auto lock = m_elements_mutex.lock_shared_rec();
 	std::ostringstream ostr(std::ios_base::binary);
 	std::ofstream out((m_savedir + DIR_DELIM + elements_states_file).c_str(), std::ios_base::binary);
 	out.write(reinterpret_cast<const char*>(&circuit_simulator_version), sizeof(circuit_simulator_version));

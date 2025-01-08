@@ -1,47 +1,19 @@
-/*
-debug.h
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
+#pragma once
 
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef DEBUG_HEADER
-#define DEBUG_HEADER
-
-#include <iostream>
 #include <exception>
-#include <assert.h>
+#include <cassert>
 #include "gettime.h"
+#include "debug/stacktrace.h"
 #include "log.h"
+#include "config.h"
 
-#if (defined(WIN32) || defined(_WIN32) || defined(_WIN32_WCE))
-	#define WIN32_LEAN_AND_MEAN
-	#ifndef _WIN32_WINNT
-		#define _WIN32_WINNT 0x0501
-	#endif
-	#include <windows.h>
-	#ifdef _MSC_VER
-		#include <eh.h>
-	#endif
-	#define NORETURN __declspec(noreturn)
+#ifdef _MSC_VER
 	#define FUNCTION_NAME __FUNCTION__
 #else
-	#define NORETURN __attribute__ ((__noreturn__))
 	#define FUNCTION_NAME __PRETTY_FUNCTION__
 #endif
 
@@ -56,10 +28,7 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 
 /* Abort program execution immediately
  */
-#ifndef __ANDROID__
-NORETURN
-#endif
-extern void fatal_error_fn(
+[[noreturn]] extern void fatal_error_fn(
 		const char *msg, const char *file,
 		unsigned int line, const char *function);
 
@@ -77,10 +46,7 @@ extern void fatal_error_fn(
 	defined)
 */
 
-#ifndef __ANDROID__
-NORETURN
-#endif
-extern void sanity_check_fn(
+[[noreturn]] extern void sanity_check_fn(
 		const char *assertion, const char *file,
 		unsigned int line, const char *function);
 
@@ -91,39 +57,9 @@ extern void sanity_check_fn(
 
 #define sanity_check(expr) SANITY_CHECK(expr)
 
+std::string debug_describe_exc(const std::exception &e);
 
 void debug_set_exception_handler();
-
-/*
-	DebugStack
-*/
-
-#define DEBUG_STACK_SIZE 50
-#define DEBUG_STACK_TEXT_SIZE 300
-
-extern void debug_stacks_init();
-extern void debug_stacks_print_to(std::ostream &os);
-extern void debug_stacks_print();
-
-struct DebugStack;
-class DebugStacker
-{
-public:
-	DebugStacker(const char *text);
-	~DebugStacker();
-
-private:
-	DebugStack *m_stack;
-	bool m_overflowed;
-};
-
-#define DSTACK(msg) \
-	DebugStacker __debug_stacker(msg);
-
-#define DSTACKF(...) \
-	char __buf[DEBUG_STACK_TEXT_SIZE];                   \
-	snprintf(__buf, DEBUG_STACK_TEXT_SIZE, __VA_ARGS__); \
-	DebugStacker __debug_stacker(__buf);
 
 /*
 	These should be put into every thread
@@ -132,10 +68,15 @@ private:
 #if CATCH_UNHANDLED_EXCEPTIONS == 1
 	#define BEGIN_DEBUG_EXCEPTION_HANDLER try {
 	#define END_DEBUG_EXCEPTION_HANDLER                        \
-		} catch (std::exception &e) {                          \
+		} catch (const std::exception &e) {                          \
+			std::string e_descr = debug_describe_exc(e);       \
 			errorstream << "An unhandled exception occurred: " \
-				<< e.what() << std::endl;                      \
-			FATAL_ERROR(e.what());                             \
+				<< e_descr << std::endl << stacktrace() << std::endl;                       \
+			FATAL_ERROR(e_descr.c_str());                      \
+		} catch (...) {                    \
+			errorstream << "An unknown unhandled exception occurred at " \
+				<< __PRETTY_FUNCTION__ << ":" << __LINE__ << std::endl << stacktrace() << std::endl; \
+			FATAL_ERROR("unknown");                             \
 		}
 #else
 	// Dummy ones
@@ -143,18 +84,13 @@ private:
 	#define END_DEBUG_EXCEPTION_HANDLER
 #endif
 
+//#define EXCEPTION_DEBUG 1 // Disable almost all catch() to get good system stacktraces
 
-//#define EXEPTION_DEBUG 1 // Disable almost all catch() to get good system stacktraces
-
-#if EXEPTION_DEBUG
+#if EXCEPTION_DEBUG
 	#define EXCEPTION_HANDLER_BEGIN
 	#define EXCEPTION_HANDLER_END
 #else
 	#define EXCEPTION_HANDLER_BEGIN try {
-	#define EXCEPTION_HANDLER_END } catch (std::exception &e) { errorstream << m_name << ": An unhandled exception occurred: " << e.what() << std::endl; } \
-									catch (...)               { errorstream << m_name << ": Ooops..." << std::endl; }
+	#define EXCEPTION_HANDLER_END } catch (const std::exception &e) { errorstream << m_name << ": An unhandled exception occurred: " << e.what() << std::endl << stacktrace() << std::endl; } \
+									catch (...)               { errorstream << m_name << ": Unknown unhandled exception at " << __PRETTY_FUNCTION__ << ":" << __LINE__ << std::endl << stacktrace() << std::endl; }
 #endif
-
-#endif // DEBUG_HEADER
-
-

@@ -21,20 +21,38 @@ You should have received a copy of the GNU General Public License
 along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef NOISE_HEADER
-#define NOISE_HEADER
+#pragma once
 
 #include <atomic>
 
+#include "constants.h"
 #include "irr_v3d.h"
 #include "exceptions.h"
 #include "util/string.h"
 
+#if defined(RANDOM_MIN)
+#undef RANDOM_MIN
+#endif
+#if defined(RANDOM_MAX)
+#undef RANDOM_MAX
+#endif
+
 extern FlagDesc flagdesc_noiseparams[];
 
-float farscale(float scale, float z);
-float farscale(float scale, float x, float z);
-float farscale(float scale, float x, float y, float z);
+template <typename type_scale, typename type_coord>
+inline type_scale farscale(type_scale scale, type_coord z) {
+	return ( 1 + ( 1 - (FARSCALE_LIMIT * 1 - (fmod(fabs(z), FARSCALE_LIMIT))                     ) / (FARSCALE_LIMIT * 1) ) * (scale - 1) );
+}
+
+template <typename type_scale, typename type_coord>
+inline type_scale farscale(type_scale scale, type_coord x, type_coord z) {
+	return ( 1 + ( 1 - (FARSCALE_LIMIT * 2 - fmod(fabs(x) + fabs(z), FARSCALE_LIMIT*2)           ) / (FARSCALE_LIMIT * 2) ) * (scale - 1) );
+}
+
+template <typename type_scale, typename type_coord>
+inline type_scale farscale(type_scale scale, type_coord x, type_coord y, type_coord z) {
+	return ( 1 + ( 1 - (FARSCALE_LIMIT * 3 - fmod(fabs(x) + fabs(y) + fabs(z), FARSCALE_LIMIT*3) ) / (FARSCALE_LIMIT * 3) ) * (scale - 1) );
+}
 
 // Note: this class is not polymorphic so that its high level of
 // optimizability may be preserved in the common use case
@@ -42,40 +60,46 @@ class PseudoRandom {
 public:
 	const static u32 RANDOM_RANGE = 32767;
 
-	inline PseudoRandom(int seed=0):
-		m_next(seed)
+	inline PseudoRandom(s32 seed_=0)
 	{
+		seed(seed_);
 	}
 
-	inline void seed(int seed)
+	inline void seed(s32 seed)
 	{
 		m_next = seed;
 	}
 
-	inline int next()
+	inline u32 next()
 	{
-		m_next = m_next * 1103515245 + 12345;
-		return (unsigned)(m_next / 65536) % (RANDOM_RANGE + 1);
+		m_next = static_cast<u32>(m_next) * 1103515245U + 12345U;
+		// Signed division is required due to backwards compatibility
+		return static_cast<u32>(m_next / 65536) % (RANDOM_RANGE + 1U);
 	}
 
-	inline int range(int min, int max)
+	inline s32 range(s32 min, s32 max)
 	{
 		if (max < min)
 			throw PrngException("Invalid range (max < min)");
 		/*
 		Here, we ensure the range is not too large relative to RANDOM_MAX,
-		as otherwise the effects of bias would become noticable.  Unlike
+		as otherwise the effects of bias would become noticeable.  Unlike
 		PcgRandom, we cannot modify this RNG's range as it would change the
 		output of this RNG for reverse compatibility.
 		*/
-		if ((u32)(max - min) > (RANDOM_RANGE + 1) / 10)
+		if (static_cast<u32>(max - min) > (RANDOM_RANGE + 1) / 5)
 			throw PrngException("Range too large");
 
 		return (next() % (max - min + 1)) + min;
 	}
 
+	// Allow save and restore of state
+	inline s32 getState() const
+	{
+		return m_next;
+	}
 private:
-	int m_next;
+	s32 m_next;
 };
 
 class PcgRandom {
@@ -92,6 +116,9 @@ public:
 	void bytes(void *out, size_t len);
 	s32 randNormalDist(s32 min, s32 max, int num_trials=6);
 
+	// Allow save and restore of state
+	void getState(u64 state[2]) const;
+	void setState(const u64 state[2]);
 private:
 	std::atomic_ullong m_state;
 	//u64 m_state;
@@ -107,38 +134,24 @@ private:
 #define NOISE_FLAG_SIMPLEX     0x10
 
 struct NoiseParams {
-	float offset;
-	float scale;
-	v3f spread;
-	s32 seed;
-	u16 octaves;
-	float persist;
-	float lacunarity;
-	u32 flags;
+	float offset = 0.0f;
+	float scale = 1.0f;
+	v3f spread = v3f(250, 250, 250);
+	s32 seed = 12345;
+	u16 octaves = 3;
+	float persist = 0.6f;
+	float lacunarity = 2.0f;
+	u32 flags = NOISE_FLAG_DEFAULTS;
 
-	float far_scale;
-	float far_spread;
-	float far_persist;
-	float far_lacunarity;
+// fm:
+	opos_t far_scale = 1;
+	opos_t far_spread = 1;
+	opos_t far_persist = 1;
+	opos_t far_lacunarity = 1;
 
-	NoiseParams()
-	{
-		offset     = 0.0f;
-		scale      = 1.0f;
-		spread     = v3f(250, 250, 250);
-		seed       = 12345;
-		octaves    = 3;
-		persist    = 0.6f;
-		lacunarity = 2.0f;
-		flags      = NOISE_FLAG_DEFAULTS;
+	NoiseParams() = default;
 
-		far_scale  = 1;
-		far_spread = 1;
-		far_persist = 1;
-		far_lacunarity = 1;
-	}
-
-	NoiseParams(float offset_, float scale_, v3f spread_, s32 seed_,
+	NoiseParams(float offset_, float scale_, const v3f &spread_, s32 seed_,
 		u16 octaves_, float persist_, float lacunarity_,
 		u32 flags_=NOISE_FLAG_DEFAULTS,
 		float far_scale_ = 1, float far_spread_ = 1, float far_persist_ = 1, float far_lacunarity_ = 1
@@ -163,13 +176,6 @@ struct NoiseParams {
 
 };
 
-
-// Convenience macros for getting/setting NoiseParams in Settings as a string
-// WARNING:  Deprecated, use Settings::getNoiseParamsFromValue() instead
-#define NOISEPARAMS_FMT_STR "f,f,v3,s32,u16,f"
-//#define getNoiseParams(x, y) getStruct((x), NOISEPARAMS_FMT_STR, &(y), sizeof(y))
-//#define setNoiseParams(x, y) setStruct((x), NOISEPARAMS_FMT_STR, &(y))
-
 class Noise {
 public:
 	NoiseParams np;
@@ -177,12 +183,12 @@ public:
 	u32 sx;
 	u32 sy;
 	u32 sz;
-	float *noise_buf;
-	float *gradient_buf;
-	float *persist_buf;
-	float *result;
+	float *noise_buf = nullptr;
+	float *gradient_buf = nullptr;
+	float *persist_buf = nullptr;
+	float *result = nullptr;
 
-	Noise(NoiseParams *np, s32 seed, u32 sx, u32 sy, u32 sz=1);
+	Noise(const NoiseParams *np, s32 seed, u32 sx, u32 sy, u32 sz=1);
 	~Noise();
 
 	void setSize(u32 sx, u32 sy, u32 sz=1);
@@ -223,12 +229,13 @@ public:
 private:
 	void allocBuffers();
 	void resizeNoiseBuf(bool is3d);
-	void updateResults(float g, float *gmap, float *persistence_map, size_t bufsize);
+	void updateResults(float g, float *gmap, const float *persistence_map,
+			size_t bufsize);
 
 };
 
-float NoisePerlin2D(NoiseParams *np, float x, float y, s32 seed);
-float NoisePerlin3D(NoiseParams *np, float x, float y, float z, s32 seed);
+float NoisePerlin2D(const NoiseParams *np, float x, float y, s32 seed);
+float NoisePerlin3D(const NoiseParams *np, float x, float y, float z, s32 seed);
 
 inline float NoisePerlin2D_PO(NoiseParams *np, float x, float xoff,
 	float y, float yoff, s32 seed)
@@ -259,21 +266,9 @@ float noise3d_gradient(float x, float y, float z, s32 seed, bool eased=false);
 float noise2d_perlin(float x, float y, s32 seed,
 		int octaves, float persistence, bool eased=true);
 
-float noise2d_perlin_abs(float x, float y, s32 seed,
-		int octaves, float persistence, bool eased=true);
-
-float noise3d_perlin(float x, float y, float z, s32 seed,
-		int octaves, float persistence, bool eased=false);
-
-float noise3d_perlin_abs(float x, float y, float z, s32 seed,
-		int octaves, float persistence, bool eased=false);
-
 inline float easeCurve(float t)
 {
 	return t * t * t * (t * (6.f * t - 15.f) + 10.f);
 }
 
 float contour(float v);
-
-#endif
-

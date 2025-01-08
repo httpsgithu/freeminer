@@ -1,68 +1,31 @@
-/*
-util/timetaker.cpp
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
-
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "timetaker.h"
 
-#include "../gettime.h"
-#include "../log.h"
+#include "porting.h"
+#include "log.h"
 #include <ostream>
 
 unsigned int g_time_taker_enabled = 0;
 
-TimeTaker::TimeTaker(const std::string &name, u32 *result, TimePrecision prec)
+void TimeTaker::start()
 {
-	if (!g_time_taker_enabled) {
-		m_running = false;
-		return;
-	}
-	m_name = name;
-	m_result = result;
-	m_running = true;
-	m_precision = prec;
-	m_time1 = getTime(prec);
+	if (!m_time1)
+	m_time1 = porting::getTime(m_precision);
 }
 
-u32 TimeTaker::stop(bool quiet)
+u64 TimeTaker::stop(bool quiet)
 {
-	if(m_running)
-	{
-		u32 time2 = getTime(m_precision);
-		u32 dtime = time2 - m_time1;
-		if(m_result != NULL)
-		{
+	if (m_running) {
+		u64 dtime = porting::getTime(m_precision) - m_time1;
+		if (m_result != nullptr) {
 			(*m_result) += dtime;
-		}
-		else
-		{
-			if (!quiet && dtime >= g_time_taker_enabled) {
-				static const char* const units[] = {
-					"s"  /* PRECISION_SECONDS */,
-					"ms" /* PRECISION_MILLI */,
-					"us" /* PRECISION_MICRO */,
-					"ns" /* PRECISION_NANO */,
-				};
-				verbosestream << m_name << " took "
-				           << dtime << units[m_precision]
-					   << std::endl;
+		} else {
+			if (!quiet && !m_name.empty() && dtime >= g_time_taker_enabled) {
+				infostream << m_name << " took "
+					<< dtime << TimePrecision_units[m_precision] << std::endl;
 			}
 		}
 		m_running = false;
@@ -71,10 +34,8 @@ u32 TimeTaker::stop(bool quiet)
 	return 0;
 }
 
-u32 TimeTaker::getTimerTime()
+u64 TimeTaker::getTimerTime()
 {
-	u32 time2 = getTime(m_precision);
-	u32 dtime = time2 - m_time1;
-	return dtime;
+	return porting::getTime(m_precision) - m_time1;
 }
 

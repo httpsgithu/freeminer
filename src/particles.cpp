@@ -1,626 +1,287 @@
-/*
-particles.cpp
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
-
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2020 sfan5 <sfan5@live.de>
 
 #include "particles.h"
-#include "constants.h"
-#include "debug.h"
-#include "settings.h"
-#include "client/tile.h"
-#include "gamedef.h"
-#include "collision.h"
-#include <stdlib.h>
-#include "util/numeric.h"
-#include "light.h"
-#include "environment.h"
-#include "clientmap.h"
-#include "mapnode.h"
-#include "client.h"
+#include <type_traits>
 
-/*
-	Utility
-*/
+using namespace ParticleParamTypes;
 
-v3f random_v3f(v3f min, v3f max)
+template<typename T>
+void RangedParameter<T>::serialize(std::ostream &os) const
 {
-	return v3f( rand()/(float)RAND_MAX*(max.X-min.X)+min.X,
-			rand()/(float)RAND_MAX*(max.Y-min.Y)+min.Y,
-			rand()/(float)RAND_MAX*(max.Z-min.Z)+min.Z);
+	min.serialize(os);
+	max.serialize(os);
+	writeF32(os, bias);
 }
 
-Particle::Particle(
-	IGameDef *gamedef,
-	scene::ISceneManager* smgr,
-	LocalPlayer *player,
-	ClientEnvironment *env,
-	v3f pos,
-	v3f velocity,
-	v3f acceleration,
-	float expirationtime,
-	float size,
-	bool collisiondetection,
-	bool collision_removal,
-	bool vertical,
-	video::ITexture *texture,
-	v2f texpos,
-	v2f texsize
-):
-	scene::ISceneNode(smgr->getRootSceneNode(), smgr)
+template<typename T>
+void RangedParameter<T>::deSerialize(std::istream &is)
 {
-	// Misc
-	m_gamedef = gamedef;
-	m_env = env;
-
-	// Texture
-	m_material.setFlag(video::EMF_LIGHTING, false);
-	m_material.setFlag(video::EMF_BACK_FACE_CULLING, false);
-	m_material.setFlag(video::EMF_BILINEAR_FILTER, false);
-	m_material.setFlag(video::EMF_FOG_ENABLE, true);
-	m_material.MaterialType = video::EMT_TRANSPARENT_ALPHA_CHANNEL;
-	m_material.setTexture(0, texture);
-	m_texpos = texpos;
-	m_texsize = texsize;
-
-
-	// Particle related
-	m_pos = pos;
-	m_velocity = velocity;
-	m_acceleration = acceleration;
-	m_expiration = expirationtime;
-	m_time = 0;
-	m_player = player;
-	m_size = size;
-	m_collisiondetection = collisiondetection;
-	m_collision_removal = collision_removal;
-	m_vertical = vertical;
-
-	// Irrlicht stuff
-	m_collisionbox = aabb3f
-			(-size/2,-size/2,-size/2,size/2,size/2,size/2);
-	this->setAutomaticCulling(scene::EAC_OFF);
-
-	// Init lighting
-	updateLight();
-
-	// Init model
-	updateVertices();
+	min.deSerialize(is);
+	max.deSerialize(is);
+	bias = readF32(is);
 }
 
-Particle::~Particle()
+
+template<typename T>
+T RangedParameter<T>::pickWithin() const
 {
+	typename T::pickFactors values;
+	auto p = numericAbsolute(bias) + 1;
+	for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+		if (bias < 0)
+			values[i] = 1.0f - std::pow(myrand_float(), p);
+		else
+			values[i] = std::pow(myrand_float(), p);
+	}
+	return T::pick(values, min, max);
 }
 
-void Particle::OnRegisterSceneNode()
+
+template<typename T>
+T TweenedParameter<T>::blend(float fac) const
 {
-	if (IsVisible)
-		SceneManager->registerNodeForRendering(this, scene::ESNRP_TRANSPARENT_EFFECT);
+	// warp time coordinates in accordance w/ settings
+	if (fac > beginning) {
+		// remap for beginning offset
+		auto len = 1 - beginning;
+		fac -= beginning;
+		fac /= len;
 
-	ISceneNode::OnRegisterSceneNode();
-}
+		// remap for repetitions
+		fac *= reps;
+		if (fac > 1) // poor man's modulo
+			fac -= (decltype(reps))fac;
 
-void Particle::render()
-{
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
-	driver->setMaterial(m_material);
-	driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
-
-	u16 indices[] = {0,1,2, 2,3,0};
-	driver->drawVertexPrimitiveList(m_vertices, 4,
-			indices, 2, video::EVT_STANDARD,
-			scene::EPT_TRIANGLES, video::EIT_16BIT);
-}
-
-void Particle::step(float dtime)
-{
-	m_time += dtime;
-	if (m_collisiondetection) {
-		aabb3f box = m_collisionbox;
-		v3f p_pos = m_pos * BS;
-		v3f p_velocity = m_velocity * BS;
-		collisionMoveResult r = collisionMoveSimple(m_env,
-			m_gamedef, BS * 0.5, box, 0, dtime, &p_pos,
-			&p_velocity, m_acceleration * BS);
-		if (m_collision_removal && r.collides) {
-			// force expiration of the particle
-			m_expiration = -1.0;
-		} else {
-			m_pos = p_pos / BS;
-			m_velocity = p_velocity / BS;
+		// remap for style
+		switch (style) {
+			case TweenStyle::fwd: /* do nothing */  break;
+			case TweenStyle::rev: fac = 1.0f - fac; break;
+			case TweenStyle::pulse:
+			case TweenStyle::flicker: {
+				if (fac > 0.5f) {
+					fac = 1.f - (fac*2.f - 1.f);
+				} else {
+					fac = fac * 2;
+				}
+				if (style == TweenStyle::flicker) {
+					fac *= myrand_range(0.7f, 1.0f);
+				}
+			}
+			case TweenStyle::TweenStyle_END:
+				break;
 		}
+		if (fac>1.f)
+			fac = 1.f;
+		else if (fac<0.f)
+			fac = 0.f;
 	} else {
-		m_velocity += m_acceleration * dtime;
-		m_pos += m_velocity * dtime;
+		fac = (style == TweenStyle::rev) ? 1.f : 0.f;
 	}
 
-	// Update lighting
-	updateLight();
-
-	// Update model
-	updateVertices();
+	return start.interpolate(fac, end);
 }
 
-void Particle::updateLight()
+template<typename T>
+void TweenedParameter<T>::serialize(std::ostream &os) const
 {
-	u8 light = 0;
+	writeU8(os, static_cast<u8>(style));
+	writeU16(os, reps);
+	writeF32(os, beginning);
+	start.serialize(os);
+	end.serialize(os);
+}
 
-	v3s16 p = v3s16(
-		floor(m_pos.X+0.5),
-		floor(m_pos.Y+0.5),
-		floor(m_pos.Z+0.5)
+template<typename T>
+void TweenedParameter<T>::deSerialize(std::istream &is)
+{
+	style = static_cast<TweenStyle>(readU8(is));
+	if (style >= TweenStyle::TweenStyle_END)
+		style = TweenStyle::fwd;
+	reps = readU16(is);
+	beginning = readF32(is);
+	start.deSerialize(is);
+	end.deSerialize(is);
+}
+
+namespace ParticleParamTypes {
+	// For function definitions
+	template struct RangedParameter<v3fParameter>;
+	template struct RangedParameter<f32Parameter>;
+
+	template struct TweenedParameter<v2fParameter>;
+	template struct TweenedParameter<v3fParameter>;
+	template struct TweenedParameter<f32Parameter>;
+	template struct TweenedParameter<v3fRange>;
+	template struct TweenedParameter<f32Range>;
+}
+
+// Linear interpolation
+template <typename T>
+static T numericalBlend(float fac, T min, T max)
+{
+	return min + ((max - min) * fac);
+}
+
+#define PARAM_PVFN(n) ParticleParamTypes::n##ParameterValue
+v2f PARAM_PVFN(pick) (float* f, const v2f a, const v2f b) {
+	return v2f(
+		numericalBlend(f[0], a.X, b.X),
+		numericalBlend(f[1], a.Y, b.Y)
 	);
-	MapNode n = m_env->getClientMap().getNodeTry(p);
-	if (n.getContent() != CONTENT_IGNORE)
-		light = n.getLightBlend(m_env->getDayNightRatio(), m_gamedef->ndef());
-	else
-		light = blend_light(m_env->getDayNightRatio(), LIGHT_SUN, 0);
-
-	m_light = decode_light(light);
 }
 
-void Particle::updateVertices()
-{
-	video::SColor c(255, m_light, m_light, m_light);
-	f32 tx0 = m_texpos.X;
-	f32 tx1 = m_texpos.X + m_texsize.X;
-	f32 ty0 = m_texpos.Y;
-	f32 ty1 = m_texpos.Y + m_texsize.Y;
-
-	m_vertices[0] = video::S3DVertex(-m_size/2,-m_size/2,0, 0,0,0,
-			c, tx0, ty1);
-	m_vertices[1] = video::S3DVertex(m_size/2,-m_size/2,0, 0,0,0,
-			c, tx1, ty1);
-	m_vertices[2] = video::S3DVertex(m_size/2,m_size/2,0, 0,0,0,
-			c, tx1, ty0);
-	m_vertices[3] = video::S3DVertex(-m_size/2,m_size/2,0, 0,0,0,
-			c, tx0, ty0);
-
-	v3s16 camera_offset = m_env->getCameraOffset();
-	for(u16 i=0; i<4; i++)
-	{
-		if (m_vertical) {
-			v3f ppos = m_player->getPosition()/BS;
-			m_vertices[i].Pos.rotateXZBy(atan2(ppos.Z-m_pos.Z, ppos.X-m_pos.X)/core::DEGTORAD+90);
-		} else {
-			m_vertices[i].Pos.rotateYZBy(m_player->getPitch());
-			m_vertices[i].Pos.rotateXZBy(m_player->getYaw());
-		}
-		m_box.addInternalPoint(m_vertices[i].Pos);
-		m_vertices[i].Pos += m_pos*BS - intToFloat(camera_offset, BS);
-	}
-}
-
-/*
-	ParticleSpawner
-*/
-
-ParticleSpawner::ParticleSpawner(IGameDef* gamedef, scene::ISceneManager *smgr, LocalPlayer *player,
-	u16 amount, float time,
-	v3f minpos, v3f maxpos, v3f minvel, v3f maxvel, v3f minacc, v3f maxacc,
-	float minexptime, float maxexptime, float minsize, float maxsize,
-	bool collisiondetection, bool collision_removal, u16 attached_id, bool vertical,
-	video::ITexture *texture, u32 id, ParticleManager *p_manager) :
-	m_particlemanager(p_manager)
-{
-	m_gamedef = gamedef;
-	m_smgr = smgr;
-	m_player = player;
-	m_amount = amount;
-	m_spawntime = time;
-	m_minpos = minpos;
-	m_maxpos = maxpos;
-	m_minvel = minvel;
-	m_maxvel = maxvel;
-	m_minacc = minacc;
-	m_maxacc = maxacc;
-	m_minexptime = minexptime;
-	m_maxexptime = maxexptime;
-	m_minsize = minsize;
-	m_maxsize = maxsize;
-	m_collisiondetection = collisiondetection;
-	m_collision_removal = collision_removal;
-	m_attached_id = attached_id;
-	m_vertical = vertical;
-	m_texture = texture;
-	m_time = 0;
-
-	for (u16 i = 0; i<=m_amount; i++)
-	{
-		float spawntime = (float)rand()/(float)RAND_MAX*m_spawntime;
-		m_spawntimes.push_back(spawntime);
-	}
-}
-
-ParticleSpawner::~ParticleSpawner() {}
-
-void ParticleSpawner::step(float dtime, ClientEnvironment* env)
-{
-	m_time += dtime;
-
-	bool unloaded = false;
-	bool is_attached = false;
-	v3f attached_pos = v3f(0,0,0);
-	float attached_yaw = 0;
-	if (m_attached_id != 0) {
-		if (ClientActiveObject *attached = env->getActiveObject(m_attached_id)) {
-			attached_pos = attached->getPosition() / BS;
-			attached_yaw = attached->getYaw();
-			is_attached = true;
-		} else {
-			unloaded = true;
-		}
-	}
-
-	if (m_spawntime != 0) // Spawner exists for a predefined timespan
-	{
-		for(std::vector<float>::iterator i = m_spawntimes.begin();
-				i != m_spawntimes.end();)
-		{
-			if ((*i) <= m_time && m_amount > 0)
-			{
-				m_amount--;
-
-				// Pretend to, but don't actually spawn a
-				// particle if it is attached to an unloaded
-				// object.
-				if (!unloaded) {
-					v3f pos = random_v3f(m_minpos, m_maxpos);
-					v3f vel = random_v3f(m_minvel, m_maxvel);
-					v3f acc = random_v3f(m_minacc, m_maxacc);
-
-					if (is_attached) {
-						// Apply attachment yaw and position
-						pos.rotateXZBy(attached_yaw);
-						pos += attached_pos;
-						vel.rotateXZBy(attached_yaw);
-						acc.rotateXZBy(attached_yaw);
-					}
-
-					float exptime = rand()/(float)RAND_MAX
-							*(m_maxexptime-m_minexptime)
-							+m_minexptime;
-					float size = rand()/(float)RAND_MAX
-							*(m_maxsize-m_minsize)
-							+m_minsize;
-
-					Particle* toadd = new Particle(
-						m_gamedef,
-						m_smgr,
-						m_player,
-						env,
-						pos,
-						vel,
-						acc,
-						exptime,
-						size,
-						m_collisiondetection,
-						m_collision_removal,
-						m_vertical,
-						m_texture,
-						v2f(0.0, 0.0),
-						v2f(1.0, 1.0));
-					m_particlemanager->addParticle(toadd);
-				}
-				i = m_spawntimes.erase(i);
-			}
-			else
-			{
-				++i;
-			}
-		}
-	}
-	else // Spawner exists for an infinity timespan, spawn on a per-second base
-	{
-		// Skip this step if attached to an unloaded object
-		if (unloaded)
-			return;
-		for (int i = 0; i <= m_amount; i++)
-		{
-			if (rand()/(float)RAND_MAX < dtime)
-			{
-				v3f pos = random_v3f(m_minpos, m_maxpos);
-				v3f vel = random_v3f(m_minvel, m_maxvel);
-				v3f acc = random_v3f(m_minacc, m_maxacc);
-
-				if (is_attached) {
-					// Apply attachment yaw and position
-					pos.rotateXZBy(attached_yaw);
-					pos += attached_pos;
-					vel.rotateXZBy(attached_yaw);
-					acc.rotateXZBy(attached_yaw);
-				}
-
-				float exptime = rand()/(float)RAND_MAX
-						*(m_maxexptime-m_minexptime)
-						+m_minexptime;
-				float size = rand()/(float)RAND_MAX
-						*(m_maxsize-m_minsize)
-						+m_minsize;
-
-				Particle* toadd = new Particle(
-					m_gamedef,
-					m_smgr,
-					m_player,
-					env,
-					pos,
-					vel,
-					acc,
-					exptime,
-					size,
-					m_collisiondetection,
-					m_collision_removal,
-					m_vertical,
-					m_texture,
-					v2f(0.0, 0.0),
-					v2f(1.0, 1.0));
-				m_particlemanager->addParticle(toadd);
-			}
-		}
-	}
-}
-
-
-ParticleManager::ParticleManager(ClientEnvironment* env) :
-	m_env(env)
-{}
-
-ParticleManager::~ParticleManager()
-{
-	clearAll();
-}
-
-void ParticleManager::step(float dtime)
-{
-	stepParticles (dtime);
-	stepSpawners (dtime);
-}
-
-void ParticleManager::stepSpawners (float dtime)
-{
-	MutexAutoLock lock(m_spawner_list_lock);
-	for(auto i =
-			m_particle_spawners.begin();
-			i != m_particle_spawners.end();)
-	{
-		if (i->second->get_expired())
-		{
-			delete i->second;
-			m_particle_spawners.erase(i++);
-		}
-		else
-		{
-			i->second->step(dtime, m_env);
-			++i;
-		}
-	}
-}
-
-void ParticleManager::stepParticles (float dtime)
-{
-	MutexAutoLock lock(m_particle_list_lock);
-	for(auto i = m_particles.begin();
-			i != m_particles.end();)
-	{
-		if ((*i)->get_expired())
-		{
-			(*i)->remove();
-			delete *i;
-			i = m_particles.erase(i);
-		}
-		else
-		{
-			(*i)->step(dtime);
-			++i;
-		}
-	}
-}
-
-void ParticleManager::clearAll ()
-{
-	{
-	MutexAutoLock lock(m_spawner_list_lock);
-	for(auto i =
-			m_particle_spawners.begin();
-			i != m_particle_spawners.end();)
-	{
-		delete i->second;
-		m_particle_spawners.erase(i++);
-	}
-	}
-
-	{
-	MutexAutoLock lock2(m_particle_list_lock);
-	for(std::vector<Particle*>::iterator i =
-			m_particles.begin();
-			i != m_particles.end();)
-	{
-		(*i)->remove();
-		delete *i;
-		i = m_particles.erase(i);
-	}
-	}
-}
-
-void ParticleManager::handleParticleEvent(ClientEvent *event, IGameDef *gamedef,
-		scene::ISceneManager* smgr, LocalPlayer *player)
-{
-	switch (event->type) {
-		case CE_DELETE_PARTICLESPAWNER: {
-			MutexAutoLock lock(m_spawner_list_lock);
-			if (m_particle_spawners.find(event->delete_particlespawner.id) !=
-					m_particle_spawners.end()) {
-				delete m_particle_spawners.find(event->delete_particlespawner.id)->second;
-				m_particle_spawners.erase(event->delete_particlespawner.id);
-			}
-			// no allocated memory in delete event
-			break;
-		}
-		case CE_ADD_PARTICLESPAWNER: {
-			{
-				MutexAutoLock lock(m_spawner_list_lock);
-				if (m_particle_spawners.find(event->add_particlespawner.id) !=
-						m_particle_spawners.end()) {
-					delete m_particle_spawners.find(event->add_particlespawner.id)->second;
-					m_particle_spawners.erase(event->add_particlespawner.id);
-				}
-			}
-
-			video::ITexture *texture =
-				gamedef->tsrc()->getTextureForMesh(*(event->add_particlespawner.texture));
-
-			ParticleSpawner* toadd = new ParticleSpawner(gamedef, smgr, player,
-					event->add_particlespawner.amount,
-					event->add_particlespawner.spawntime,
-					*event->add_particlespawner.minpos,
-					*event->add_particlespawner.maxpos,
-					*event->add_particlespawner.minvel,
-					*event->add_particlespawner.maxvel,
-					*event->add_particlespawner.minacc,
-					*event->add_particlespawner.maxacc,
-					event->add_particlespawner.minexptime,
-					event->add_particlespawner.maxexptime,
-					event->add_particlespawner.minsize,
-					event->add_particlespawner.maxsize,
-					event->add_particlespawner.collisiondetection,
-					event->add_particlespawner.collision_removal,
-					event->add_particlespawner.attached_id,
-					event->add_particlespawner.vertical,
-					texture,
-					event->add_particlespawner.id,
-					this);
-
-			/* delete allocated content of event */
-			delete event->add_particlespawner.minpos;
-			delete event->add_particlespawner.maxpos;
-			delete event->add_particlespawner.minvel;
-			delete event->add_particlespawner.maxvel;
-			delete event->add_particlespawner.minacc;
-			delete event->add_particlespawner.texture;
-			delete event->add_particlespawner.maxacc;
-
-			{
-				MutexAutoLock lock(m_spawner_list_lock);
-				m_particle_spawners.insert(
-						std::pair<u32, ParticleSpawner*>(
-								event->add_particlespawner.id,
-								toadd));
-			}
-			break;
-		}
-		case CE_SPAWN_PARTICLE: {
-			video::ITexture *texture =
-				gamedef->tsrc()->getTextureForMesh(*(event->spawn_particle.texture));
-
-			Particle* toadd = new Particle(gamedef, smgr, player, m_env,
-					*event->spawn_particle.pos,
-					*event->spawn_particle.vel,
-					*event->spawn_particle.acc,
-					event->spawn_particle.expirationtime,
-					event->spawn_particle.size,
-					event->spawn_particle.collisiondetection,
-					event->spawn_particle.collision_removal,
-					event->spawn_particle.vertical,
-					texture,
-					v2f(0.0, 0.0),
-					v2f(1.0, 1.0));
-
-			addParticle(toadd);
-
-			delete event->spawn_particle.pos;
-			delete event->spawn_particle.vel;
-			delete event->spawn_particle.acc;
-
-			break;
-		}
-		default: break;
-	}
-}
-
-void ParticleManager::addDiggingParticles(IGameDef* gamedef, scene::ISceneManager* smgr,
-		LocalPlayer *player, v3s16 pos, const TileSpec tiles[])
-{
-	for (u16 j = 0; j < 32; j++) // set the amount of particles here
-	{
-		addNodeParticle(gamedef, smgr, player, pos, tiles);
-	}
-}
-
-void ParticleManager::addPunchingParticles(IGameDef* gamedef, scene::ISceneManager* smgr,
-		LocalPlayer *player, v3s16 pos, const TileSpec tiles[])
-{
-	addNodeParticle(gamedef, smgr, player, pos, tiles);
-}
-
-void ParticleManager::addNodeParticle(IGameDef* gamedef, scene::ISceneManager* smgr,
-		LocalPlayer *player, v3s16 pos, const TileSpec tiles[])
-{
-	// Texture
-	u8 texid = myrand_range(0, 5);
-	video::ITexture *texture = tiles[texid].texture;
-
-	// Only use first frame of animated texture
-	f32 ymax = 1;
-	if(tiles[texid].material_flags & MATERIAL_FLAG_ANIMATION_VERTICAL_FRAMES)
-		ymax /= tiles[texid].animation_frame_count;
-
-	float size = rand() % 64 / 512.;
-	float visual_size = BS * size;
-	v2f texsize(size * 2, ymax * size * 2);
-	v2f texpos;
-	texpos.X = ((rand() % 64) / 64. - texsize.X);
-	texpos.Y = ymax * ((rand() % 64) / 64. - texsize.Y);
-
-	// Physics
-	v3f velocity((rand() % 100 / 50. - 1) / 1.5,
-			rand() % 100 / 35.,
-			(rand() % 100 / 50. - 1) / 1.5);
-
-	v3f acceleration(0,-9,0);
-	v3f particlepos = v3f(
-		(f32) pos.X + rand() %100 /200. - 0.25,
-		(f32) pos.Y + rand() %100 /200. - 0.25,
-		(f32) pos.Z + rand() %100 /200. - 0.25
+v3f PARAM_PVFN(pick) (float* f, const v3f a, const v3f b) {
+	return v3f(
+		numericalBlend(f[0], a.X, b.X),
+		numericalBlend(f[1], a.Y, b.Y),
+		numericalBlend(f[2], a.Z, b.Z)
 	);
-
-	Particle* toadd = new Particle(
-		gamedef,
-		smgr,
-		player,
-		m_env,
-		particlepos,
-		velocity,
-		acceleration,
-		rand() % 100 / 100., // expiration time
-		visual_size,
-		true,
-		false,
-		false,
-		texture,
-		texpos,
-		texsize);
-
-	addParticle(toadd);
 }
 
-void ParticleManager::addParticle(Particle* toadd)
+v2f PARAM_PVFN(interpolate) (float fac, const v2f a, const v2f b)
+	{ return b.getInterpolated(a, fac); }
+v3f PARAM_PVFN(interpolate) (float fac, const v3f a, const v3f b)
+	{ return b.getInterpolated(a, fac); }
+
+#define PARAM_DEF_SRZR(T, wr, rd) \
+	void PARAM_PVFN(serialize)  (std::ostream& os, T  v) {wr(os,v);  } \
+	void PARAM_PVFN(deSerialize)(std::istream& is, T& v) {v = rd(is);}
+
+
+#define PARAM_DEF_NUM(T, wr, rd) PARAM_DEF_SRZR(T, wr, rd) \
+	T PARAM_PVFN(interpolate)(float fac, const T a, const T b) \
+			{ return numericalBlend<T>(fac,a,b); } \
+	T PARAM_PVFN(pick)       (float* f, const T a, const T b) \
+			{ return numericalBlend<T>(f[0],a,b); }
+
+PARAM_DEF_NUM(u8,  writeU8,    readU8);  PARAM_DEF_NUM(s8,  writeS8,    readS8);
+PARAM_DEF_NUM(u16, writeU16,   readU16); PARAM_DEF_NUM(s16, writeS16,   readS16);
+PARAM_DEF_NUM(u32, writeU32,   readU32); PARAM_DEF_NUM(s32, writeS32,   readS32);
+PARAM_DEF_NUM(f32, writeF32,   readF32);
+PARAM_DEF_SRZR(v2f, writeV2F32, readV2F32);
+PARAM_DEF_SRZR(v3f, writeV3F32, readV3F32);
+
+enum class ParticleTextureFlags : u8 {
+	/* each value specifies a bit in a bitmask; if the maximum value
+	 * goes above 1<<7 the type of the flags field must be changed
+	 * from u8, which will necessitate a protocol change! */
+
+	// the first bit indicates whether the texture is animated
+	animated = 1,
+
+	/* the next three bits indicate the blending mode of the texture
+	 * blendmode is encoded by (flags |= (u8)blend << 1); retrieve with
+	 * (flags & ParticleTextureFlags::blend) >> 1. note that the third
+	 * bit is currently reserved for adding more blend modes in the future */
+	blend = 0x7 << 1,
+};
+
+/* define some shorthand so we don't have to repeat ourselves or use
+ * decltype everywhere */
+using FlagT = std::underlying_type_t<ParticleTextureFlags>;
+
+void ServerParticleTexture::serialize(std::ostream &os, u16 protocol_ver,
+		bool newPropertiesOnly, bool skipAnimation) const
 {
-	MutexAutoLock lock(m_particle_list_lock);
-	m_particles.push_back(toadd);
+	/* newPropertiesOnly is used to de/serialize parameters of the legacy texture
+	 * field, which are encoded separately from the texspec string */
+	FlagT flags = 0;
+	if (animated)
+		flags |= FlagT(ParticleTextureFlags::animated);
+	if (blendmode != BlendMode::alpha)
+		flags |= FlagT(blendmode) << 1;
+	serializeParameterValue(os, flags);
+
+	alpha.serialize(os);
+	scale.serialize(os);
+	if (!newPropertiesOnly)
+		os << serializeString32(string);
+
+	if (!skipAnimation && animated)
+		animation.serialize(os, protocol_ver);
+}
+
+void ServerParticleTexture::deSerialize(std::istream &is, u16 protocol_ver,
+		bool newPropertiesOnly, bool skipAnimation)
+{
+	FlagT flags = 0;
+	deSerializeParameterValue(is, flags);
+	// new texture properties were missing in ParticleParameters::serialize
+	// before Minetest 5.9.0
+	if (is.eof())
+		return;
+
+	animated = !!(flags & FlagT(ParticleTextureFlags::animated));
+	blendmode = BlendMode((flags & FlagT(ParticleTextureFlags::blend)) >> 1);
+
+	alpha.deSerialize(is);
+	scale.deSerialize(is);
+	if (!newPropertiesOnly)
+		string = deSerializeString32(is);
+
+	if (!skipAnimation && animated)
+		animation.deSerialize(is, protocol_ver);
+}
+
+void ParticleParameters::serialize(std::ostream &os, u16 protocol_ver) const
+{
+	writeV3F32(os, pos);
+	writeV3F32(os, vel);
+	writeV3F32(os, acc);
+	writeF32(os, expirationtime);
+	writeF32(os, size);
+	writeU8(os, collisiondetection);
+	os << serializeString32(texture.string);
+	writeU8(os, vertical);
+	writeU8(os, collision_removal);
+	animation.serialize(os, protocol_ver);
+	writeU8(os, glow);
+	writeU8(os, object_collision);
+	writeU16(os, node.param0);
+	writeU8(os, node.param2);
+	writeU8(os, node_tile);
+	writeV3F32(os, drag);
+	jitter.serialize(os);
+	bounce.serialize(os);
+	texture.serialize(os, protocol_ver, true, true);
+}
+
+template <typename T, T (reader)(std::istream& is)>
+inline bool streamEndsBeforeParam(T& val, std::istream& is)
+{
+	// This is kinda awful
+	T tmp = reader(is);
+	if (is.eof())
+		return true;
+	val = tmp;
+	return false;
+}
+
+void ParticleParameters::deSerialize(std::istream &is, u16 protocol_ver)
+{
+	pos                = readV3F32(is);
+	vel                = readV3F32(is);
+	acc                = readV3F32(is);
+	expirationtime     = readF32(is);
+	size               = readF32(is);
+	collisiondetection = readU8(is);
+	texture.string     = deSerializeString32(is);
+	vertical           = readU8(is);
+	collision_removal  = readU8(is);
+	animation.deSerialize(is, protocol_ver);
+	glow               = readU8(is);
+	object_collision   = readU8(is);
+
+	if (streamEndsBeforeParam<u16, readU16>(node.param0, is))
+		return;
+	node.param2 = readU8(is);
+	node_tile   = readU8(is);
+
+	if (streamEndsBeforeParam<v3f, readV3F32>(drag, is))
+		return;
+	jitter.deSerialize(is);
+	bounce.deSerialize(is);
+	texture.deSerialize(is, protocol_ver, true, true);
 }

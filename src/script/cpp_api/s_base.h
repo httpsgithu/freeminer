@@ -1,41 +1,27 @@
-/*
-script/cpp_api/s_base.h
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef S_BASE_H_
-#define S_BASE_H_
+#pragma once
 
 #include <iostream>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <unordered_map>
+#include "common/helper.h"
+#include "util/basic_macros.h"
 
 extern "C" {
 #include <lua.h>
+#include <lualib.h>
 }
 
 #include "irrlichttypes.h"
-#include "threads.h"
-#include "threading/mutex.h"
-#include "threading/mutex_auto_lock.h"
 #include "common/c_types.h"
 #include "common/c_internal.h"
+#include "debug.h"
+#include "config.h"
 
 /*
 #define SCRIPTAPI_LOCK_DEBUG
@@ -46,12 +32,12 @@ extern "C" {
 // use that name to bypass security!
 #define BUILTIN_MOD_NAME "*builtin*"
 
-#define PCALL_RES(RES) do {                 \
+#define PCALL_RES(RES) {                    \
 	int result_ = (RES);                    \
 	if (result_ != 0) {                     \
 		scriptError(result_, __FUNCTION__); \
 	}                                       \
-} while (0)
+}
 
 #define runCallbacks(nargs, mode) \
 	runCallbacksRaw((nargs), (mode), __FUNCTION__)
@@ -59,19 +45,43 @@ extern "C" {
 #define setOriginFromTable(index) \
 	setOriginFromTableRaw(index, __FUNCTION__)
 
+enum class ScriptingType: u8 {
+	Async, // either mainmenu (client) or ingame (server)
+	Client,
+	MainMenu,
+	Server,
+	Emerge
+};
+
 class Server;
+#if CHECK_CLIENT_BUILD()
+class Client;
+#endif
+class EmergeThread;
+class IGameDef;
 class Environment;
 class GUIEngine;
 class ServerActiveObject;
+struct PlayerHPChangeReason;
 
-class ScriptApiBase {
+class ScriptApiBase : protected LuaHelper {
 public:
-	ScriptApiBase();
+	ScriptApiBase(ScriptingType type);
+	// fake constructor to allow script API classes (e.g ScriptApiEnv) to virtually inherit from this one.
+	ScriptApiBase()
+	{
+		FATAL_ERROR("ScriptApiBase created without ScriptingType!");
+	}
 	virtual ~ScriptApiBase();
+	DISABLE_CLASS_COPY(ScriptApiBase);
 
 	// These throw a ModError on failure
 	void loadMod(const std::string &script_path, const std::string &mod_name);
 	void loadScript(const std::string &script_path);
+
+#if CHECK_CLIENT_BUILD()
+	void loadModFromMemory(const std::string &mod_name);
+#endif
 
 	void runCallbacksRaw(int nargs,
 		RunCallbacksMode mode, const char *fxn);
@@ -80,11 +90,40 @@ public:
 	void addObjectReference(ServerActiveObject *cobj);
 	void removeObjectReference(ServerActiveObject *cobj);
 
-	Server* getServer() { return m_server; }
+	ScriptingType getType() { return m_type; }
 
-	std::string getOrigin() { return m_last_run_mod; }
+	IGameDef *getGameDef() { return m_gamedef; }
+	Server* getServer();
+#if CHECK_CLIENT_BUILD()
+	Client* getClient();
+#endif
+
+	// IMPORTANT: These cannot be used for any security-related uses, they exist
+	// only to enrich error messages.
+	const std::string &getOrigin() { return m_last_run_mod; }
 	void setOriginDirect(const char *origin);
 	void setOriginFromTableRaw(int index, const char *fxn);
+
+	// Returns the currently running mod, only during init time.
+	// The reason this is "insecure" is that mods can mess with each others code,
+	// so the boundary of who is responsible is fuzzy.
+	// Note: checking this against BUILTIN_MOD_NAME is always safe (not spoofable).
+	// returns "" on error
+	static std::string getCurrentModNameInsecure(lua_State *L);
+	// Returns the currently running mod, only during init time.
+	// This checks the Lua stack to only permit direct calls in the file
+	// scope. That way it is assured that it's really the mod it claims to be.
+	// returns "" on error
+	static std::string getCurrentModName(lua_State *L);
+
+#if !CHECK_CLIENT_BUILD()
+	inline void clientOpenLibs(lua_State *L) { assert(false); }
+#else
+	void clientOpenLibs(lua_State *L);
+#endif
+
+	// Check things that should be set by the builtin mod.
+	void checkSetByBuiltin();
 
 protected:
 	friend class LuaABM;
@@ -93,46 +132,67 @@ protected:
 	friend class ObjectRef;
 	friend class NodeMetaRef;
 	friend class ModApiBase;
-	friend class ModApiEnvMod;
+	friend class ModApiEnv;
 	friend class LuaVoxelManip;
+	friend class TestMoveAction; // needs getStack()
 
+	/*
+		Subtle edge case with coroutines: If for whatever reason you have a
+		method in a subclass that's called from existing lua_CFunction
+		(any of the l_*.cpp files) then make it static and take the lua_State*
+		as an argument. This is REQUIRED because getStack() will not return the
+		correct state if called inside coroutines.
+
+		Also note that src/script/common/ is the better place for such helpers.
+	*/
 	lua_State* getStack()
 		{ return m_luastack; }
 
+	// Checks that stack size is sane
 	void realityCheck();
-
+	// Takes an error from lua_pcall and throws it as a LuaError
 	void scriptError(int result, const char *fxn);
+	// Dumps stack contents for debugging
 	void stackDump(std::ostream &o);
 
-	void setServer(Server* server) { m_server = server; }
+	void setGameDef(IGameDef* gamedef) { m_gamedef = gamedef; }
 
 	Environment* getEnv() { return m_environment; }
 	void setEnv(Environment* env) { m_environment = env; }
 
+#if CHECK_CLIENT_BUILD()
 	GUIEngine* getGuiEngine() { return m_guiengine; }
 	void setGuiEngine(GUIEngine* guiengine) { m_guiengine = guiengine; }
+#endif
+
+	EmergeThread* getEmergeThread() { return m_emerge; }
+	void setEmergeThread(EmergeThread *emerge) { m_emerge = emerge; }
 
 	void objectrefGetOrCreate(lua_State *L, ServerActiveObject *cobj);
-	void objectrefGet(lua_State *L, u16 id);
+
+	void pushPlayerHPChangeReason(lua_State *L, const PlayerHPChangeReason& reason);
 
 public:
-	RecursiveMutex  m_luastackmutex;
+	std::recursive_mutex m_luastackmutex;
 protected:
 	std::string     m_last_run_mod;
-	bool            m_secure;
+	bool            m_secure = false;
 #ifdef SCRIPTAPI_LOCK_DEBUG
-	int             m_lock_recursion_count;
-	threadid_t      m_owning_thread;
+	int             m_lock_recursion_count{};
+	std::thread::id m_owning_thread;
 #endif
 
 private:
 	static int luaPanic(lua_State *L);
 
-	lua_State*      m_luastack;
+	lua_State      *m_luastack = nullptr;
 
-	Server*         m_server;
-	Environment*    m_environment;
-	GUIEngine*      m_guiengine;
+	IGameDef       *m_gamedef = nullptr;
+	Environment    *m_environment = nullptr;
+#if CHECK_CLIENT_BUILD()
+	GUIEngine      *m_guiengine = nullptr;
+#endif
+	EmergeThread   *m_emerge = nullptr;
+
+	ScriptingType  m_type;
 };
-
-#endif /* S_BASE_H_ */

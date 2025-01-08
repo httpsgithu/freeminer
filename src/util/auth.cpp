@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2015, 2016 est31 <MTest31@outlook.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2015, 2016 est31 <MTest31@outlook.com>
 
 #include <algorithm>
 #include <string>
@@ -23,7 +8,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "base64.h"
 #include "sha1.h"
 #include "srp.h"
-#include "string.h"
+#include "util/string.h"
 #include "debug.h"
 
 // Get an sha-1 hash of the player's name combined with
@@ -39,10 +24,9 @@ std::string translate_password(const std::string &name,
 
 	std::string slt = name + password;
 	SHA1 sha1;
-	sha1.addBytes(slt.c_str(), slt.length());
-	unsigned char *digest = sha1.getDigest();
-	std::string pwd = base64_encode(digest, 20);
-	free(digest);
+	sha1.addBytes(slt);
+	std::string digest = sha1.getDigest();
+	std::string pwd = base64_encode(digest);
 	return pwd;
 }
 
@@ -71,7 +55,7 @@ std::string generate_srp_verifier(const std::string &name,
 	// get modified if &salt_ptr isn't NULL.
 	char *salt_ptr = (char *)salt.c_str();
 
-	char *bytes_v = NULL;
+	char *bytes_v = nullptr;
 	size_t verifier_len = 0;
 	gen_srp_v(name, password, &salt_ptr, &salt_len, &bytes_v, &verifier_len);
 	std::string verifier = std::string(bytes_v, verifier_len);
@@ -84,9 +68,9 @@ void generate_srp_verifier_and_salt(const std::string &name,
 	const std::string &password, std::string *verifier,
 	std::string *salt)
 {
-	char *bytes_v = NULL;
+	char *bytes_v = nullptr;
 	size_t verifier_len;
-	char *salt_ptr = NULL;
+	char *salt_ptr = nullptr;
 	size_t salt_len;
 	gen_srp_v(name, password, &salt_ptr, &salt_len, &bytes_v, &verifier_len);
 	*verifier = std::string(bytes_v, verifier_len);
@@ -112,8 +96,8 @@ std::string encode_srp_verifier(const std::string &verifier,
 {
 	std::ostringstream ret_str;
 	ret_str << "#1#"
-		<< base64_encode((unsigned char *)salt.c_str(), salt.size()) << "#"
-		<< base64_encode((unsigned char *)verifier.c_str(), verifier.size());
+		<< base64_encode(salt) << "#"
+		<< base64_encode(verifier);
 	return ret_str.str();
 }
 

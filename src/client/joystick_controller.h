@@ -1,24 +1,8 @@
-/*
-Minetest
-Copyright (C) 2016 est31, <MTest31@outlook.com>
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2016 est31, <MTest31@outlook.com>
 
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
-
-#ifndef JOYSTICK_HEADER
-#define JOYSTICK_HEADER
+#pragma once
 
 #include "irrlichttypes_extrabloated.h"
 #include "keys.h"
@@ -52,13 +36,16 @@ struct JoystickCombination {
 
 struct JoystickButtonCmb : public JoystickCombination {
 
-	JoystickButtonCmb() {}
+	JoystickButtonCmb() = default;
+
 	JoystickButtonCmb(GameKeyType key, u32 filter_mask, u32 compare_mask) :
 		filter_mask(filter_mask),
 		compare_mask(compare_mask)
 	{
 		this->key = key;
 	}
+
+	virtual ~JoystickButtonCmb() = default;
 
 	virtual bool isTriggered(const irr::SEvent::SJoystickEvent &ev) const;
 
@@ -68,7 +55,8 @@ struct JoystickButtonCmb : public JoystickCombination {
 
 struct JoystickAxisCmb : public JoystickCombination {
 
-	JoystickAxisCmb() {}
+	JoystickAxisCmb() = default;
+
 	JoystickAxisCmb(GameKeyType key, u16 axis_to_compare, int direction, s16 thresh) :
 		axis_to_compare(axis_to_compare),
 		direction(direction),
@@ -77,7 +65,9 @@ struct JoystickAxisCmb : public JoystickCombination {
 		this->key = key;
 	}
 
-	virtual bool isTriggered(const irr::SEvent::SJoystickEvent &ev) const;
+	virtual ~JoystickAxisCmb() = default;
+
+	bool isTriggered(const irr::SEvent::SJoystickEvent &ev) const override;
 
 	u16 axis_to_compare;
 
@@ -91,49 +81,53 @@ struct JoystickLayout {
 	std::vector<JoystickButtonCmb> button_keys;
 	std::vector<JoystickAxisCmb> axis_keys;
 	JoystickAxisLayout axes[JA_COUNT];
-	s16 axes_dead_border;
+	s16 axes_deadzone;
 };
 
 class JoystickController {
 
 public:
 	JoystickController();
+
+	void onJoystickConnect(const std::vector<irr::SJoystickInfo> &joystick_infos);
+
 	bool handleEvent(const irr::SEvent::SJoystickEvent &ev);
 	void clear();
 
+	void releaseAllKeys()
+	{
+		m_keys_released |= m_keys_down;
+		m_keys_down.reset();
+	}
+
 	bool wasKeyDown(GameKeyType b)
 	{
-		bool r = m_past_pressed_keys[b];
-		m_past_pressed_keys[b] = false;
+		bool r = m_past_keys_pressed[b];
+		m_past_keys_pressed[b] = false;
 		return r;
-	}
-	bool getWasKeyDown(GameKeyType b)
-	{
-		return m_past_pressed_keys[b];
-	}
-	void clearWasKeyDown(GameKeyType b)
-	{
-		m_past_pressed_keys[b] = false;
 	}
 
 	bool wasKeyReleased(GameKeyType b)
 	{
-		bool r = m_past_released_keys[b];
-		m_past_released_keys[b] = false;
-		return r;
-	}
-	bool getWasKeyReleased(GameKeyType b)
-	{
-		return m_past_pressed_keys[b];
+		return m_keys_released[b];
 	}
 	void clearWasKeyReleased(GameKeyType b)
 	{
-		m_past_pressed_keys[b] = false;
+		m_keys_released[b] = false;
+	}
+
+	bool wasKeyPressed(GameKeyType b)
+	{
+		return m_keys_pressed[b];
+	}
+	void clearWasKeyPressed(GameKeyType b)
+	{
+		m_keys_pressed[b] = false;
 	}
 
 	bool isKeyDown(GameKeyType b)
 	{
-		return m_pressed_keys[b];
+		return m_keys_down[b];
 	}
 
 	s16 getAxis(JoystickAxis axis)
@@ -141,23 +135,34 @@ public:
 		return m_axes_vals[axis];
 	}
 
-	s16 getAxisWithoutDead(JoystickAxis axis);
+	float getAxisWithoutDead(JoystickAxis axis);
+
+	float getMovementDirection();
+	float getMovementSpeed();
+
+	u8 getJoystickId() const
+	{
+		return m_joystick_id;
+	}
 
 	f32 doubling_dtime;
 
 private:
-	const JoystickLayout *m_layout;
+	void setLayoutFromControllerName(const std::string &name);
+
+	JoystickLayout m_layout;
 
 	s16 m_axes_vals[JA_COUNT];
 
-	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_pressed_keys;
+	u8 m_joystick_id = 0;
+
+	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_keys_down;
+	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_keys_pressed;
 
 	f32 m_internal_time;
 
 	f32 m_past_pressed_time[KeyType::INTERNAL_ENUM_COUNT];
 
-	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_past_pressed_keys;
-	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_past_released_keys;
+	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_past_keys_pressed;
+	std::bitset<KeyType::INTERNAL_ENUM_COUNT> m_keys_released;
 };
-
-#endif

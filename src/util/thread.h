@@ -1,40 +1,26 @@
-/*
-util/thread.h
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
+#pragma once
 
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef UTIL_THREAD_HEADER
-#define UTIL_THREAD_HEADER
-
-#include "../irrlichttypes.h"
-#include "../threading/thread.h"
-#include "../threading/mutex.h"
-#include "../threading/mutex_auto_lock.h"
+#include "irrlichttypes.h"
+#include "threading/thread.h"
+#include "threading/mutex_auto_lock.h"
 #include "porting.h"
 #include "log.h"
-#include "../threading/thread_pool.h"
+#include "container.h"
+
+//fm:
+#include "../threading/thread_vector.h"
+#include "../fm_porting.h"
+
 
 template<typename T>
-class MutexedVariable {
+class MutexedVariable
+{
 public:
-	MutexedVariable(T value):
+	MutexedVariable(const T &value):
 		m_value(value)
 	{}
 
@@ -44,23 +30,16 @@ public:
 		return m_value;
 	}
 
-	void set(T value)
+	void set(const T &value)
 	{
 		MutexAutoLock lock(m_mutex);
 		m_value = value;
 	}
 
-	// You'll want to grab this in a SharedPtr
-	MutexAutoLock *getLock()
-	{
-		return new MutexAutoLock(m_mutex);
-	}
-
 	// You pretty surely want to grab the lock when accessing this
 	T m_value;
-
 private:
-	Mutex m_mutex;
+	std::mutex m_mutex;
 };
 
 /*
@@ -89,11 +68,11 @@ public:
 template<typename Key, typename T, typename Caller, typename CallerData>
 class GetRequest {
 public:
-	GetRequest() {}
-	~GetRequest() {}
+	GetRequest() = default;
+	~GetRequest() = default;
 
-	GetRequest(Key a_key) {
-		key = a_key;
+	GetRequest(const Key &a_key): key(a_key)
+	{
 	}
 
 	Key key;
@@ -115,7 +94,7 @@ public:
 		return m_queue.empty();
 	}
 
-	void add(Key key, Caller caller, CallerData callerdata,
+	void add(const Key &key, Caller caller, CallerData callerdata,
 		ResultQueue<Key, T, Caller, CallerData> *dest)
 	{
 		typename std::deque<GetRequest<Key, T, Caller, CallerData> >::iterator i;
@@ -196,17 +175,17 @@ private:
 	MutexedQueue<GetRequest<Key, T, Caller, CallerData> > m_queue;
 };
 
-class UpdateThread : public thread_pool
+class UpdateThread : public thread_vector
 {
 public:
-	UpdateThread(const std::string &name) : thread_pool(name + "Update") {}
-	~UpdateThread() {}
+	UpdateThread(const std::string &name) : thread_vector(name + "Update") {}
+	~UpdateThread() = default;
 
 	void deferUpdate() { m_update_sem.post(); }
 
 	void stop()
 	{
-		thread_pool::stop();
+		thread_vector::stop();
 
 		// give us a nudge
 		m_update_sem.post();
@@ -216,7 +195,6 @@ public:
 	{
 		porting::setThreadPriority(30);
 
-		DSTACK(FUNCTION_NAME);
 		BEGIN_DEBUG_EXCEPTION_HANDLER
 
 		while (!stopRequested()) {
@@ -242,6 +220,3 @@ protected:
 private:
 	Semaphore m_update_sem;
 };
-
-#endif
-

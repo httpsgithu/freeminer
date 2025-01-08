@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "test.h"
 
@@ -33,7 +18,7 @@ public:
 	void runTests(IGameDef *gamedef);
 
 	void testVoxelArea();
-	void testVoxelManipulator(INodeDefManager *nodedef);
+	void testVoxelManipulator(const NodeDefManager *nodedef);
 };
 
 static TestVoxelManipulator g_test_instance;
@@ -61,8 +46,8 @@ void TestVoxelManipulator::testVoxelArea()
 
 	// Correct results
 	std::vector<VoxelArea> results;
-	results.push_back(VoxelArea(v3s16(-2,-2,-3), v3s16(3,2,-3)));
-	results.push_back(VoxelArea(v3s16(3,-2,-2), v3s16(3,2,2)));
+	results.emplace_back(v3s16(-2,-2,-3), v3s16(3,2,-3));
+	results.emplace_back(v3s16(3,-2,-2), v3s16(3,2,2));
 
 	UASSERT(aa.size() == results.size());
 
@@ -80,14 +65,14 @@ void TestVoxelManipulator::testVoxelArea()
 }
 
 
-void TestVoxelManipulator::testVoxelManipulator(INodeDefManager *nodedef)
+void TestVoxelManipulator::testVoxelManipulator(const NodeDefManager *nodedef)
 {
 	VoxelManipulator v;
 
 	v.print(infostream, nodedef);
 
 	infostream << "*** Setting (-1,0,-1)=2 ***" << std::endl;
-	v.setNodeNoRef(v3s16(-1,0,-1), MapNode(t_CONTENT_GRASS));
+	v.setNode(v3s16(-1,0,-1), MapNode(t_CONTENT_GRASS));
 
 	v.print(infostream, nodedef);
 	UASSERT(v.getNode(v3s16(-1,0,-1)).getContent() == t_CONTENT_GRASS);

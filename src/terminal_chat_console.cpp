@@ -1,22 +1,8 @@
-/*
-Minetest
-Copyright (C) 2015 est31 <MTest31@outlook.com>
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2015 est31 <MTest31@outlook.com>
 
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
-
+#include <inttypes.h>
 #include "config.h"
 #if USE_CURSES
 #include "version.h"
@@ -25,6 +11,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "settings.h"
 #include "util/numeric.h"
 #include "util/string.h"
+#include "chat_interface.h"
 
 TerminalChatConsole g_term_console;
 
@@ -279,7 +266,7 @@ void TerminalChatConsole::handleInput(int ch, bool &complete_redraw_needed)
 				ChatPrompt::CURSOROP_DIR_RIGHT,
 				ChatPrompt::CURSOROP_SCOPE_LINE);
 			break;
-		case KEY_TAB:
+		case '\t':
 			// Tab pressed
 			// Nick completion
 			prompt.nickCompletion(m_nicks, false);
@@ -322,10 +309,10 @@ void TerminalChatConsole::step(int ch)
 		ChatEvent *evt = m_chat_interface->outgoing_queue.pop_frontNoEx();
 		switch (evt->type) {
 			case CET_NICK_REMOVE:
-				m_nicks.remove(((ChatEventNick *)evt)->nick);
+				m_nicks.erase(((ChatEventNick *)evt)->nick);
 				break;
 			case CET_NICK_ADD:
-				m_nicks.push_back(((ChatEventNick *)evt)->nick);
+				m_nicks.insert(((ChatEventNick *)evt)->nick);
 				break;
 			case CET_CHAT:
 				complete_redraw_needed = true;
@@ -348,7 +335,8 @@ void TerminalChatConsole::step(int ch)
 
 		std::wstring error_message = utf8_to_wide(Logger::getLevelLabel(p.first));
 		if (!g_settings->getBool("disable_escape_sequences")) {
-			error_message = L"\x1b(c@red)" + error_message + L"\x1b(c@white)";
+			error_message = std::wstring(L"\x1b(c@red)").append(error_message)
+				.append(L"\x1b(c@white)");
 		}
 		m_chat_backend.addMessage(error_message, utf8_to_wide(p.second));
 	}
@@ -397,7 +385,7 @@ void TerminalChatConsole::step(int ch)
 	minutes = (float)minutes / 1000 * 60;
 
 	if (m_game_time)
-		printw(" | Game %d Time of day %02d:%02d ",
+		printw(" | Game %" PRIu64 " Time of day %02d:%02d ",
 			m_game_time, hours, minutes);
 
 	// draw text
@@ -424,7 +412,7 @@ void TerminalChatConsole::step(int ch)
 		printw("[ESC] Toggle ESC mode |"
 			" [CTRL+C] Shut down |"
 			" (L) in-, (l) decrease loglevel %s",
-			Logger::getLevelLabel((LogLevel) m_log_level).c_str());
+			Logger::getLevelLabel((LogLevel) m_log_level));
 	}
 
 	refresh();
@@ -439,8 +427,7 @@ void TerminalChatConsole::draw_text()
 		const ChatFormattedLine& line = buf.getFormattedLine(row);
 		if (line.fragments.empty())
 			continue;
-		for (u32 i = 0; i < line.fragments.size(); ++i) {
-			const ChatFormattedFragment& fragment = line.fragments[i];
+		for (const ChatFormattedFragment &fragment : line.fragments) {
 			addstr(wide_to_utf8(fragment.text.getString()).c_str());
 		}
 	}

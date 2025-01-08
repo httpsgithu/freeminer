@@ -1,27 +1,8 @@
-/*
-nodetimer.h
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef NODETIMER_HEADER
-#define NODETIMER_HEADER
+#pragma once
 
 #include "irr_v3d.h"
 #include <iostream>
@@ -39,18 +20,18 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 class NodeTimer
 {
 public:
-	NodeTimer(): timeout(0.), elapsed(0.) {}
+	NodeTimer() = default;
 	NodeTimer(const v3s16 &position_):
-		timeout(0.), elapsed(0.), position(position_) {}
+		position(position_) {}
 	NodeTimer(f32 timeout_, f32 elapsed_, v3s16 position_):
 		timeout(timeout_), elapsed(elapsed_), position(position_) {}
-	~NodeTimer() {}
-	
+	~NodeTimer() = default;
+
 	void serialize(std::ostream &os) const;
 	void deSerialize(std::istream &is);
-	
-	f32 timeout;
-	f32 elapsed;
+
+	f32 timeout = 0.0f;
+	f32 elapsed = 0.0f;
 	v3s16 position;
 };
 
@@ -61,12 +42,12 @@ public:
 class NodeTimerList
 {
 public:
-	NodeTimerList(): m_next_trigger_time(-1.), m_time(0.) {}
-	~NodeTimerList() {}
-	
+	NodeTimerList() = default;
+	~NodeTimerList() = default;
+
 	void serialize(std::ostream &os, u8 map_format_version) const;
 	void deSerialize(std::istream &is, u8 map_format_version);
-	
+
 	// Get timer
 	NodeTimer get(const v3s16 &p) {
 		std::map<v3s16, std::multimap<double, NodeTimer>::iterator>::iterator n =
@@ -96,16 +77,12 @@ public:
 			}
 		}
 	}
-	// Undefined behaviour if there already is a timer
-	void insert(NodeTimer timer) {
+	// Undefined behavior if there already is a timer
+	void insert(const NodeTimer &timer) {
 		v3s16 p = timer.position;
 		double trigger_time = m_time + (double)(timer.timeout - timer.elapsed);
-		std::multimap<double, NodeTimer>::iterator it =
-			m_timers.insert(std::pair<double, NodeTimer>(
-				trigger_time, timer
-			));
-		m_iterators.insert(
-			std::pair<v3s16, std::multimap<double, NodeTimer>::iterator>(p, it));
+		std::multimap<double, NodeTimer>::iterator it = m_timers.emplace(trigger_time, timer);
+		m_iterators.emplace(p, it);
 		if (m_next_trigger_time == -1. || trigger_time < m_next_trigger_time)
 			m_next_trigger_time = trigger_time;
 	}
@@ -121,11 +98,7 @@ public:
 		m_next_trigger_time = -1.;
 	}
 
-	inline double getNextTriggerTime() {
-		return m_next_trigger_time;
-	}
-
-	float m_uptime_last = 0;
+	double m_uptime_last = 0;
 
 	// Move forward in time, returns elapsed timers
 	std::vector<NodeTimer> step(float dtime);
@@ -133,9 +106,6 @@ public:
 private:
 	std::multimap<double, NodeTimer> m_timers;
 	std::map<v3s16, std::multimap<double, NodeTimer>::iterator> m_iterators;
-	double m_next_trigger_time;
-	double m_time;
+	double m_next_trigger_time = -1.0;
+	double m_time = 0.0;
 };
-
-#endif
-

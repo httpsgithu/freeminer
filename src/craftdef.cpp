@@ -1,32 +1,15 @@
-/*
-craftdef.cpp
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
-
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "craftdef.h"
 
 #include "irrlichttypes.h"
 #include "log.h"
 #include <sstream>
-#include <set>
+#include <unordered_set>
 #include <algorithm>
+#include <queue>
 #include "gamedef.h"
 #include "inventory.h"
 #include "util/serialize.h"
@@ -37,7 +20,16 @@ along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
 
 inline bool isGroupRecipeStr(const std::string &rec_name)
 {
-	return str_starts_with(rec_name, std::string("group:"));
+	return str_starts_with(rec_name, "group:");
+}
+
+static bool hasGroupItem(const std::vector<std::string> &recipe)
+{
+	for (const auto &item : recipe) {
+		if (isGroupRecipeStr(item))
+			return true;
+	}
+	return false;
 }
 
 inline u64 getHashForString(const std::string &recipe_str)
@@ -52,17 +44,17 @@ static u64 getHashForGrid(CraftHashType type, const std::vector<std::string> &gr
 		case CRAFT_HASH_TYPE_ITEM_NAMES: {
 			std::ostringstream os;
 			bool is_first = true;
-			for (size_t i = 0; i < grid_names.size(); i++) {
-				if (grid_names[i] != "") {
-					os << (is_first ? "" : "\n") << grid_names[i];
+			for (const std::string &grid_name : grid_names) {
+				if (!grid_name.empty()) {
+					os << (is_first ? "" : "\n") << grid_name;
 					is_first = false;
 				}
 			}
 			return getHashForString(os.str());
 		} case CRAFT_HASH_TYPE_COUNT: {
 			u64 cnt = 0;
-			for (size_t i = 0; i < grid_names.size(); i++)
-				if (grid_names[i] != "")
+			for (const std::string &grid_name : grid_names)
+				if (!grid_name.empty())
 					cnt++;
 			return cnt;
 		} case CRAFT_HASH_TYPE_UNHASHED:
@@ -115,9 +107,9 @@ static std::vector<std::string> craftGetItemNames(
 		const std::vector<std::string> &itemstrings, IGameDef *gamedef)
 {
 	std::vector<std::string> result;
-	for (std::vector<std::string>::size_type i = 0;
-			i < itemstrings.size(); i++) {
-		result.push_back(craftGetItemName(itemstrings[i], gamedef));
+	result.reserve(itemstrings.size());
+	for (const auto &itemstring : itemstrings) {
+		result.push_back(craftGetItemName(itemstring, gamedef));
 	}
 	return result;
 }
@@ -127,9 +119,9 @@ static std::vector<std::string> craftGetItemNames(
 		const std::vector<ItemStack> &items, IGameDef *gamedef)
 {
 	std::vector<std::string> result;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < items.size(); i++) {
-		result.push_back(items[i].name);
+	result.reserve(items.size());
+	for (const auto &item : items) {
+		result.push_back(item.name);
 	}
 	return result;
 }
@@ -139,10 +131,10 @@ static std::vector<ItemStack> craftGetItems(
 		const std::vector<std::string> &items, IGameDef *gamedef)
 {
 	std::vector<ItemStack> result;
-	for (std::vector<std::string>::size_type i = 0;
-			i < items.size(); i++) {
-		result.push_back(ItemStack(std::string(items[i]), (u16)1,
-			(u16)0, "", gamedef->getItemDefManager()));
+	result.reserve(items.size());
+	for (const auto &item : items) {
+		result.emplace_back(std::string(item), (u16)1,
+			(u16)0, gamedef->getItemDefManager());
 	}
 	return result;
 }
@@ -156,10 +148,9 @@ static bool craftGetBounds(const std::vector<std::string> &items, unsigned int w
 	bool success = false;
 	unsigned int x = 0;
 	unsigned int y = 0;
-	for (std::vector<std::string>::size_type i = 0;
-			i < items.size(); i++) {
+	for (const std::string &item : items) {
 		// Is this an actual item?
-		if (items[i] != "") {
+		if (!item.empty()) {
 			if (!success) {
 				// This is the first nonempty item
 				min_x = max_x = x;
@@ -186,10 +177,9 @@ static bool craftGetBounds(const std::vector<std::string> &items, unsigned int w
 // Removes 1 from each item stack
 static void craftDecrementInput(CraftInput &input, IGameDef *gamedef)
 {
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		if (input.items[i].count != 0)
-			input.items[i].remove(1);
+	for (auto &item : input.items) {
+		if (item.count != 0)
+			item.remove(1);
 	}
 }
 
@@ -209,28 +199,26 @@ static void craftDecrementOrReplaceInput(CraftInput &input,
 	// Make a copy of the replacements pair list
 	std::vector<std::pair<std::string, std::string> > pairs = replacements.pairs;
 
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		ItemStack &item = input.items[i];
+	for (auto &item : input.items) {
 		// Find an appropriate replacement
 		bool found_replacement = false;
-		for (std::vector<std::pair<std::string, std::string> >::iterator
-				j = pairs.begin();
-				j != pairs.end(); ++j) {
+		for (auto j = pairs.begin(); j != pairs.end(); ++j) {
 			if (inputItemMatchesRecipe(item.name, j->first, gamedef->idef())) {
 				if (item.count == 1) {
 					item.deSerialize(j->second, gamedef->idef());
 					found_replacement = true;
 					pairs.erase(j);
 					break;
-				} else {
-					ItemStack rep;
-					rep.deSerialize(j->second, gamedef->idef());
-					item.remove(1);
-					found_replacement = true;
-					output_replacements.push_back(rep);
-					break;
 				}
+
+				ItemStack rep;
+				rep.deSerialize(j->second, gamedef->idef());
+				item.remove(1);
+				found_replacement = true;
+				pairs.erase(j);
+				output_replacements.push_back(rep);
+				break;
+
 			}
 		}
 		// No replacement was found, simply decrement count by one
@@ -286,6 +274,15 @@ std::string craftDumpMatrix(const std::vector<ItemStack> &items,
 	CraftInput
 */
 
+bool CraftInput::empty() const
+{
+	for (const auto &item : items) {
+		if (!item.empty())
+			return false;
+	}
+	return true;
+}
+
 std::string CraftInput::dump() const
 {
 	std::ostringstream os(std::ios::binary);
@@ -314,9 +311,7 @@ std::string CraftReplacements::dump() const
 	std::ostringstream os(std::ios::binary);
 	os<<"{";
 	const char *sep = "";
-	for (std::vector<std::pair<std::string, std::string> >::size_type i = 0;
-			i < pairs.size(); i++) {
-		const std::pair<std::string, std::string> &repl_p = pairs[i];
+	for (const auto &repl_p : pairs) {
 		os << sep
 			<< '"' << (repl_p.first)
 			<< "\"=>\"" << (repl_p.second) << '"';
@@ -329,6 +324,19 @@ std::string CraftReplacements::dump() const
 /*
 	CraftDefinitionShaped
 */
+
+CraftDefinitionShaped::CraftDefinitionShaped(
+		const std::string &output_,
+		unsigned int width_,
+		const std::vector<std::string> &recipe_,
+		const CraftReplacements &replacements_):
+	output(output_), width(width_), recipe(recipe_), replacements(replacements_)
+{
+	if (hasGroupItem(recipe))
+		priority = PRIORITY_SHAPED_AND_GROUPS;
+	else
+		priority = PRIORITY_SHAPED;
+}
 
 std::string CraftDefinitionShaped::getName() const
 {
@@ -346,7 +354,7 @@ bool CraftDefinitionShaped::check(const CraftInput &input, IGameDef *gamedef) co
 	if (inp_width == 0)
 		return false;
 	while (inp_names.size() % inp_width != 0)
-		inp_names.push_back("");
+		inp_names.emplace_back("");
 
 	// Get input bounds
 	unsigned int inp_min_x = 0, inp_max_x = 0, inp_min_y = 0, inp_max_y = 0;
@@ -365,7 +373,7 @@ bool CraftDefinitionShaped::check(const CraftInput &input, IGameDef *gamedef) co
 	if (rec_width == 0)
 		return false;
 	while (rec_names.size() % rec_width != 0)
-		rec_names.push_back("");
+		rec_names.emplace_back("");
 
 	// Get recipe bounds
 	unsigned int rec_min_x=0, rec_max_x=0, rec_min_y=0, rec_max_y=0;
@@ -417,22 +425,6 @@ void CraftDefinitionShaped::decrementInput(CraftInput &input, std::vector<ItemSt
 	craftDecrementOrReplaceInput(input, output_replacements, replacements, gamedef);
 }
 
-CraftHashType CraftDefinitionShaped::getHashType() const
-{
-	assert(hash_inited); // Pre-condition
-	bool has_group = false;
-	for (size_t i = 0; i < recipe_names.size(); i++) {
-		if (isGroupRecipeStr(recipe_names[i])) {
-			has_group = true;
-			break;
-		}
-	}
-	if (has_group)
-		return CRAFT_HASH_TYPE_COUNT;
-	else
-		return CRAFT_HASH_TYPE_ITEM_NAMES;
-}
-
 u64 CraftDefinitionShaped::getHash(CraftHashType type) const
 {
 	assert(hash_inited); // Pre-condition
@@ -450,6 +442,11 @@ void CraftDefinitionShaped::initHash(IGameDef *gamedef)
 		return;
 	hash_inited = true;
 	recipe_names = craftGetItemNames(recipe, gamedef);
+
+	if (hasGroupItem(recipe_names))
+		hash_type = CRAFT_HASH_TYPE_COUNT;
+	else
+		hash_type = CRAFT_HASH_TYPE_ITEM_NAMES;
 }
 
 std::string CraftDefinitionShaped::dump() const
@@ -465,9 +462,128 @@ std::string CraftDefinitionShaped::dump() const
 	CraftDefinitionShapeless
 */
 
+CraftDefinitionShapeless::CraftDefinitionShapeless(
+		const std::string &output_,
+		const std::vector<std::string> &recipe_,
+		const CraftReplacements &replacements_):
+	output(output_), recipe(recipe_), replacements(replacements_)
+{
+	if (hasGroupItem(recipe))
+		priority = PRIORITY_SHAPELESS_AND_GROUPS;
+	else
+		priority = PRIORITY_SHAPELESS;
+}
+
 std::string CraftDefinitionShapeless::getName() const
 {
 	return "shapeless";
+}
+
+constexpr u16 SHAPELESS_GROUPS_MAX = 30000;
+
+// Checks if there's a matching that matches all nodes in a given bipartite graph.
+// bip_graph has graph_size nodes on each side. It is stored as list of lists of
+// neighbors from one side.
+// See https://en.wikipedia.org/w/index.php?title=Hopcroft-Karp_algorithm for
+// details.
+static bool hopcroft_karp_can_match_all(const std::vector<std::vector<u16>> &bip_graph)
+{
+	assert(bip_graph.size() <= SHAPELESS_GROUPS_MAX);
+	u16 graph_size = bip_graph.size();
+	const u16 nil = graph_size; // nil / dummy index
+	constexpr u16 inf = UINT16_MAX; // bigger than any path length (> SHAPELESS_GROUPS_MAX * 2)
+
+	auto pair_u = std::make_unique<u16[]>(graph_size + 1); // for each u (or nil) the matched v (or nil)
+	auto pair_v = std::make_unique<u16[]>(graph_size + 1); // for each v (or nil) the matched u (or nil)
+	auto dist = std::make_unique<u16[]>(graph_size + 1); // for each u (or nil) the bfs distance
+	u16 num_matched;
+	std::queue<u16> queue{};
+
+	// calculates distances from unmatched nodes for augmentation paths until
+	// dummy is reached
+	// returns false if dummy can't be reached (and hence there are no further
+	// augmentation paths)
+	auto do_bfs = [&]() {
+		assert(queue.empty());
+
+		// enqueue all unmatched, give inf dist to the rest
+		for (u16 u = 0; u < graph_size; ++u) {
+			if (pair_u[u] == nil) {
+				dist[u] = 0;
+				queue.push(u);
+			} else {
+				dist[u] = inf;
+			}
+		}
+		dist[nil] = inf;
+
+		while (!queue.empty()) {
+			u16 u = queue.front();
+			queue.pop();
+
+			if (dist[u] < dist[nil]) { // if dummy not yet reached
+				for (u16 v : bip_graph[u]) { // for all adjanced of u
+					u16 u_back = pair_v[v];
+					// if u_back unvisited, go there
+					if (dist[u_back] == inf) {
+						dist[u_back] = dist[u] + 1;
+						queue.push(u_back);
+					}
+				}
+			}
+		}
+
+		return dist[nil] != inf;
+	};
+
+	// tries to find an augmenting path from u to the dummy
+	// if successful, swaps all edges along path and returns true
+	// otherwise returns false
+	auto do_dfs_raw = [&](u16 u, auto &&recurse) -> bool {
+		if (u == nil) // dummy => dest reached
+			return true;
+
+		for (u16 v : bip_graph[u]) { // for all adjanced of u
+			u16 u_back = pair_v[v];
+			// only walk according to bfs dists
+			if (dist[u_back] != dist[u] + 1)
+				continue;
+
+			// if walk along u_back reached dummy, swap edges and backtrack
+			if (recurse(u_back, recurse)) {
+				pair_v[v] = u;
+				pair_u[u] = v;
+				return true;
+			}
+		}
+
+		// unsuccessful path, don't walk here again
+		dist[u] = inf;
+		return false;
+	};
+
+	auto do_dfs = [&](u16 u) {
+		return do_dfs_raw(u, do_dfs_raw);
+	};
+
+	// everyone starts as matched to dummy
+	std::fill_n(&pair_u[0], graph_size + 1, nil);
+	std::fill_n(&pair_v[0], graph_size + 1, nil);
+
+	num_matched = 0;
+
+	while (do_bfs()) {
+		// try to match unmatched u nodes
+		for (u16 u = 0; u < graph_size; ++u) {
+			if (pair_u[u] == nil) {
+				if (do_dfs(u)) {
+					num_matched += 1;
+				}
+			}
+		}
+	}
+
+	return num_matched == graph_size;
 }
 
 bool CraftDefinitionShapeless::check(const CraftInput &input, IGameDef *gamedef) const
@@ -477,10 +593,8 @@ bool CraftDefinitionShapeless::check(const CraftInput &input, IGameDef *gamedef)
 
 	// Filter empty items out of input
 	std::vector<std::string> input_filtered;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		const ItemStack &item = input.items[i];
-		if (item.name != "")
+	for (const auto &item : input.items) {
+		if (!item.name.empty())
 			input_filtered.push_back(item.name);
 	}
 
@@ -492,35 +606,61 @@ bool CraftDefinitionShapeless::check(const CraftInput &input, IGameDef *gamedef)
 		return false;
 	}
 
+	// Sort input and recipe
+	std::sort(input_filtered.begin(), input_filtered.end());
+
 	std::vector<std::string> recipe_copy;
-	if (hash_inited)
+	if (hash_inited) {
 		recipe_copy = recipe_names;
-	else {
+	} else {
 		recipe_copy = craftGetItemNames(recipe, gamedef);
 		std::sort(recipe_copy.begin(), recipe_copy.end());
 	}
 
-	// Try with all permutations of the recipe,
-	// start from the lexicographically first permutation (=sorted),
-	// recipe_names is pre-sorted
-	do {
-		// If all items match, the recipe matches
-		bool all_match = true;
-		//dstream<<"Testing recipe (output="<<output<<"):";
-		for (size_t i=0; i<recipe.size(); i++) {
-			//dstream<<" ("<<input_filtered[i]<<" == "<<recipe_copy[i]<<")";
-			if (!inputItemMatchesRecipe(input_filtered[i], recipe_copy[i],
-					gamedef->idef())) {
-				all_match = false;
-				break;
-			}
-		}
-		//dstream<<" -> match="<<all_match<<std::endl;
-		if (all_match)
-			return true;
-	} while (std::next_permutation(recipe_copy.begin(), recipe_copy.end()));
+	// Split recipe in group and non-group
+	std::vector<std::string> recipe_nogroup;
+	std::vector<std::string> recipe_onlygroup;
+	std::partition_copy(recipe_copy.begin(), recipe_copy.end(),
+			std::back_inserter(recipe_onlygroup),
+			std::back_inserter(recipe_nogroup),
+			[](const std::string &name) { return str_starts_with(name, "group:"); });
 
-	return false;
+	// Filter out non-group recipe slots, using sorted merge.
+	// (This prefiltering is only a performance optimization and not strictly
+	// necessary.)
+	std::vector<std::string> input_for_group;
+	std::set_difference(input_filtered.begin(), input_filtered.end(),
+			recipe_nogroup.begin(), recipe_nogroup.end(),
+			std::back_inserter(input_for_group));
+
+	// All non-group slots must be satisfied
+	if (input_filtered.size() - input_for_group.size() != recipe_nogroup.size())
+		return false;
+
+	// Find out which recipe slots each input item satisfies. This creates a
+	// bipartite graph
+	assert(recipe_onlygroup.size() == input_for_group.size());
+	if (recipe_onlygroup.size() > SHAPELESS_GROUPS_MAX) {
+		// SHAPELESS_GROUPS_MAX is large enough that this should never happen by
+		// accident
+		errorstream << "Too many groups in shapless craft." << std::endl;
+		return false;
+	}
+	u16 graph_size = recipe_onlygroup.size();
+	// bip_graph[i] are the group-slots that item i can satisfy
+	std::vector<std::vector<u16>> bip_graph;
+	bip_graph.resize(graph_size);
+	for (u16 i = 0; i < graph_size; ++i) {
+		std::vector<u16> &neighbors_i = bip_graph[i];
+		for (u16 j = 0; j < graph_size; ++j) {
+			if (inputItemMatchesRecipe(input_for_group[i], recipe_onlygroup[j],
+					gamedef->idef()))
+				neighbors_i.push_back(j);
+		}
+	}
+
+	// Check if the maximum cardinality matching of bip_graph matches all items
+	return hopcroft_karp_can_match_all(bip_graph);
 }
 
 CraftOutput CraftDefinitionShapeless::getOutput(const CraftInput &input, IGameDef *gamedef) const
@@ -539,22 +679,6 @@ void CraftDefinitionShapeless::decrementInput(CraftInput &input, std::vector<Ite
 	craftDecrementOrReplaceInput(input, output_replacements, replacements, gamedef);
 }
 
-CraftHashType CraftDefinitionShapeless::getHashType() const
-{
-	assert(hash_inited); // Pre-condition
-	bool has_group = false;
-	for (size_t i = 0; i < recipe_names.size(); i++) {
-		if (isGroupRecipeStr(recipe_names[i])) {
-			has_group = true;
-			break;
-		}
-	}
-	if (has_group)
-		return CRAFT_HASH_TYPE_COUNT;
-	else
-		return CRAFT_HASH_TYPE_ITEM_NAMES;
-}
-
 u64 CraftDefinitionShapeless::getHash(CraftHashType type) const
 {
 	assert(hash_inited); // Pre-condition
@@ -570,6 +694,11 @@ void CraftDefinitionShapeless::initHash(IGameDef *gamedef)
 	hash_inited = true;
 	recipe_names = craftGetItemNames(recipe, gamedef);
 	std::sort(recipe_names.begin(), recipe_names.end());
+
+	if (hasGroupItem(recipe_names))
+		hash_type = CRAFT_HASH_TYPE_COUNT;
+	else
+		hash_type = CRAFT_HASH_TYPE_ITEM_NAMES;
 }
 
 std::string CraftDefinitionShapeless::dump() const
@@ -585,6 +714,12 @@ std::string CraftDefinitionShapeless::dump() const
 	CraftDefinitionToolRepair
 */
 
+CraftDefinitionToolRepair::CraftDefinitionToolRepair(float additional_wear_):
+	additional_wear(additional_wear_)
+{
+	priority = PRIORITY_TOOLREPAIR;
+}
+
 static ItemStack craftToolRepair(
 		const ItemStack &item1,
 		const ItemStack &item2,
@@ -594,7 +729,7 @@ static ItemStack craftToolRepair(
 	IItemDefManager *idef = gamedef->idef();
 	if (item1.count != 1 || item2.count != 1 || item1.name != item2.name
 			|| idef->get(item1.name).type != ITEM_TOOL
-			|| idef->get(item2.name).type != ITEM_TOOL) {
+			|| itemgroup_get(idef->get(item1.name).groups, "disable_repair") == 1) {
 		// Failure
 		return ItemStack();
 	}
@@ -625,9 +760,7 @@ bool CraftDefinitionToolRepair::check(const CraftInput &input, IGameDef *gamedef
 
 	ItemStack item1;
 	ItemStack item2;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		const ItemStack &item = input.items[i];
+	for (const auto &item : input.items) {
 		if (!item.empty()) {
 			if (item1.empty())
 				item1 = item;
@@ -645,9 +778,7 @@ CraftOutput CraftDefinitionToolRepair::getOutput(const CraftInput &input, IGameD
 {
 	ItemStack item1;
 	ItemStack item2;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		const ItemStack &item = input.items[i];
+	for (const auto &item : input.items) {
 		if (!item.empty()) {
 			if (item1.empty())
 				item1 = item;
@@ -662,7 +793,7 @@ CraftOutput CraftDefinitionToolRepair::getOutput(const CraftInput &input, IGameD
 CraftInput CraftDefinitionToolRepair::getInput(const CraftOutput &output, IGameDef *gamedef) const
 {
 	std::vector<ItemStack> stack;
-	stack.push_back(ItemStack());
+	stack.emplace_back();
 	return CraftInput(CRAFT_METHOD_COOKING, additional_wear, stack);
 }
 
@@ -683,6 +814,19 @@ std::string CraftDefinitionToolRepair::dump() const
 	CraftDefinitionCooking
 */
 
+CraftDefinitionCooking::CraftDefinitionCooking(
+		const std::string &output_,
+		const std::string &recipe_,
+		float cooktime_,
+		const CraftReplacements &replacements_):
+	output(output_), recipe(recipe_), cooktime(cooktime_), replacements(replacements_)
+{
+	if (isGroupRecipeStr(recipe))
+		priority = PRIORITY_SHAPELESS_AND_GROUPS;
+	else
+		priority = PRIORITY_SHAPELESS;
+}
+
 std::string CraftDefinitionCooking::getName() const
 {
 	return "cooking";
@@ -695,10 +839,9 @@ bool CraftDefinitionCooking::check(const CraftInput &input, IGameDef *gamedef) c
 
 	// Filter empty items out of input
 	std::vector<std::string> input_filtered;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		const std::string &name = input.items[i].name;
-		if (name != "")
+	for (const auto &item : input.items) {
+		const std::string &name = item.name;
+		if (!name.empty())
 			input_filtered.push_back(name);
 	}
 
@@ -711,7 +854,8 @@ bool CraftDefinitionCooking::check(const CraftInput &input, IGameDef *gamedef) c
 	}
 
 	// Check the single input item
-	return inputItemMatchesRecipe(input_filtered[0], recipe, gamedef->idef());
+	std::string rec_name = craftGetItemName(recipe, gamedef);
+	return inputItemMatchesRecipe(input_filtered[0], rec_name, gamedef->idef());
 }
 
 CraftOutput CraftDefinitionCooking::getOutput(const CraftInput &input, IGameDef *gamedef) const
@@ -732,25 +876,19 @@ void CraftDefinitionCooking::decrementInput(CraftInput &input, std::vector<ItemS
 	craftDecrementOrReplaceInput(input, output_replacements, replacements, gamedef);
 }
 
-CraftHashType CraftDefinitionCooking::getHashType() const
-{
-	if (isGroupRecipeStr(recipe_name))
-		return CRAFT_HASH_TYPE_COUNT;
-	else
-		return CRAFT_HASH_TYPE_ITEM_NAMES;
-}
-
 u64 CraftDefinitionCooking::getHash(CraftHashType type) const
 {
 	if (type == CRAFT_HASH_TYPE_ITEM_NAMES) {
 		return getHashForString(recipe_name);
-	} else if (type == CRAFT_HASH_TYPE_COUNT) {
-		return 1;
-	} else {
-		//illegal hash type for this CraftDefinition (pre-condition)
-		assert(false);
-		return 0;
 	}
+
+	if (type == CRAFT_HASH_TYPE_COUNT) {
+		return 1;
+	}
+
+	// illegal hash type for this CraftDefinition (pre-condition)
+	assert(false);
+	return 0;
 }
 
 void CraftDefinitionCooking::initHash(IGameDef *gamedef)
@@ -759,6 +897,11 @@ void CraftDefinitionCooking::initHash(IGameDef *gamedef)
 		return;
 	hash_inited = true;
 	recipe_name = craftGetItemName(recipe, gamedef);
+
+	if (isGroupRecipeStr(recipe_name))
+		hash_type = CRAFT_HASH_TYPE_COUNT;
+	else
+		hash_type = CRAFT_HASH_TYPE_ITEM_NAMES;
 }
 
 std::string CraftDefinitionCooking::dump() const
@@ -775,6 +918,18 @@ std::string CraftDefinitionCooking::dump() const
 	CraftDefinitionFuel
 */
 
+CraftDefinitionFuel::CraftDefinitionFuel(
+		const std::string &recipe_,
+		float burntime_,
+		const CraftReplacements &replacements_):
+	recipe(recipe_), burntime(burntime_), replacements(replacements_)
+{
+	if (isGroupRecipeStr(recipe_name))
+		priority = PRIORITY_SHAPELESS_AND_GROUPS;
+	else
+		priority = PRIORITY_SHAPELESS;
+}
+
 std::string CraftDefinitionFuel::getName() const
 {
 	return "fuel";
@@ -787,10 +942,9 @@ bool CraftDefinitionFuel::check(const CraftInput &input, IGameDef *gamedef) cons
 
 	// Filter empty items out of input
 	std::vector<std::string> input_filtered;
-	for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-		const std::string &name = input.items[i].name;
-		if (name != "")
+	for (const auto &item : input.items) {
+		const std::string &name = item.name;
+		if (!name.empty())
 			input_filtered.push_back(name);
 	}
 
@@ -803,7 +957,8 @@ bool CraftDefinitionFuel::check(const CraftInput &input, IGameDef *gamedef) cons
 	}
 
 	// Check the single input item
-	return inputItemMatchesRecipe(input_filtered[0], recipe, gamedef->idef());
+	std::string rec_name = craftGetItemName(recipe, gamedef);
+	return inputItemMatchesRecipe(input_filtered[0], rec_name, gamedef->idef());
 }
 
 CraftOutput CraftDefinitionFuel::getOutput(const CraftInput &input, IGameDef *gamedef) const
@@ -824,25 +979,19 @@ void CraftDefinitionFuel::decrementInput(CraftInput &input, std::vector<ItemStac
 	craftDecrementOrReplaceInput(input, output_replacements, replacements, gamedef);
 }
 
-CraftHashType CraftDefinitionFuel::getHashType() const
-{
-	if (isGroupRecipeStr(recipe_name))
-		return CRAFT_HASH_TYPE_COUNT;
-	else
-		return CRAFT_HASH_TYPE_ITEM_NAMES;
-}
-
 u64 CraftDefinitionFuel::getHash(CraftHashType type) const
 {
 	if (type == CRAFT_HASH_TYPE_ITEM_NAMES) {
 		return getHashForString(recipe_name);
-	} else if (type == CRAFT_HASH_TYPE_COUNT) {
-		return 1;
-	} else {
-		//illegal hash type for this CraftDefinition (pre-condition)
-		assert(false);
-		return 0;
 	}
+
+	if (type == CRAFT_HASH_TYPE_COUNT) {
+		return 1;
+	}
+
+	// illegal hash type for this CraftDefinition (pre-condition)
+	assert(false);
+	return 0;
 }
 
 void CraftDefinitionFuel::initHash(IGameDef *gamedef)
@@ -851,7 +1000,13 @@ void CraftDefinitionFuel::initHash(IGameDef *gamedef)
 		return;
 	hash_inited = true;
 	recipe_name = craftGetItemName(recipe, gamedef);
+
+	if (isGroupRecipeStr(recipe_name))
+		hash_type = CRAFT_HASH_TYPE_COUNT;
+	else
+		hash_type = CRAFT_HASH_TYPE_ITEM_NAMES;
 }
+
 std::string CraftDefinitionFuel::dump() const
 {
 	std::ostringstream os(std::ios::binary);
@@ -882,26 +1037,18 @@ public:
 			std::vector<ItemStack> &output_replacement, bool decrementInput,
 			IGameDef *gamedef) const
 	{
-		output.item = "";
-		output.time = 0;
-
-		// If all input items are empty, abort.
-		bool all_empty = true;
-		for (std::vector<ItemStack>::size_type i = 0;
-			i < input.items.size(); i++) {
-			if (!input.items[i].empty()) {
-				all_empty = false;
-				break;
-			}
-		}
-		if (all_empty)
+		if (input.empty())
 			return false;
 
 		std::vector<std::string> input_names;
 		input_names = craftGetItemNames(input.items, gamedef);
 		std::sort(input_names.begin(), input_names.end());
 
-		// Try hash types with increasing collision rate, and return if found.
+		// Try hash types with increasing collision rate
+		// while remembering the latest, highest priority recipe.
+		CraftDefinition::RecipePriority priority_best =
+			CraftDefinition::PRIORITY_NO_RECIPE;
+		CraftDefinition *def_best = nullptr;
 		for (int type = 0; type <= craft_hash_type_max; type++) {
 			u64 hash = getHashForGrid((CraftHashType) type, input_names);
 
@@ -909,8 +1056,7 @@ public:
 
 			// We'd like to do "const [...] hash_collisions = m_craft_defs[type][hash];"
 			// but that doesn't compile for some reason. This does.
-			std::map<u64, std::vector<CraftDefinition*> >::const_iterator
-				col_iter = (m_craft_defs[type]).find(hash);
+			auto col_iter = (m_craft_defs[type]).find(hash);
 
 			if (col_iter == (m_craft_defs[type]).end())
 				continue;
@@ -925,17 +1071,30 @@ public:
 				/*errorstream << "Checking " << input.dump() << std::endl
 					<< " against " << def->dump() << std::endl;*/
 
-				if (def->check(input, gamedef)) {
-					// Get output, then decrement input (if requested)
-					output = def->getOutput(input, gamedef);
-					if (decrementInput)
-						def->decrementInput(input, output_replacement, gamedef);
-					/*errorstream << "Check RETURNS TRUE" << std::endl;*/
-					return true;
+				CraftDefinition::RecipePriority priority = def->getPriority();
+				if (priority > priority_best
+						&& def->check(input, gamedef)) {
+					// Check if the crafted node/item exists
+					CraftOutput out = def->getOutput(input, gamedef);
+					ItemStack is;
+					is.deSerialize(out.item, gamedef->idef());
+					if (!is.isKnown(gamedef->idef())) {
+						infostream << "trying to craft non-existent "
+							<< out.item << ", ignoring recipe" << std::endl;
+						continue;
+					}
+
+					output = out;
+					priority_best = priority;
+					def_best = def;
 				}
 			}
 		}
-		return false;
+		if (priority_best == CraftDefinition::PRIORITY_NO_RECIPE)
+			return false;
+		if (decrementInput)
+			def_best->decrementInput(input, output_replacement, gamedef);
+		return true;
 	}
 
 	virtual std::vector<CraftDefinition*> getCraftRecipes(CraftOutput &output,
@@ -943,8 +1102,7 @@ public:
 	{
 		std::vector<CraftDefinition*> recipes;
 
-		std::map<std::string, std::vector<CraftDefinition*> >::const_iterator
-			vec_iter = m_output_craft_definitions.find(output.item);
+		auto vec_iter = m_output_craft_definitions.find(output.item);
 
 		if (vec_iter == m_output_craft_definitions.end())
 			return recipes;
@@ -964,93 +1122,55 @@ public:
 		return recipes;
 	}
 
-	virtual bool clearCraftRecipesByOutput(const CraftOutput &output, IGameDef *gamedef)
+	virtual bool clearCraftsByOutput(const CraftOutput &output, IGameDef *gamedef)
 	{
-		std::map<std::string, std::vector<CraftDefinition*> >::iterator vec_iter =
-			m_output_craft_definitions.find(output.item);
+		auto to_clear = m_output_craft_definitions.find(output.item);
 
-		if (vec_iter == m_output_craft_definitions.end())
+		if (to_clear == m_output_craft_definitions.end())
 			return false;
 
-		std::vector<CraftDefinition*> &vec = vec_iter->second;
-		for (std::vector<CraftDefinition*>::iterator i = vec.begin();
-				i != vec.end(); ++i) {
-			CraftDefinition *def = *i;
+		for (auto def : to_clear->second) {
 			// Recipes are not yet hashed at this point
-			std::vector<CraftDefinition*> &unhashed_inputs_vec = m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0];
-			std::vector<CraftDefinition*> new_vec_by_input;
-			/* We will preallocate necessary memory addresses, so we don't need to reallocate them later.
-				This would save us some performance. */
-			new_vec_by_input.reserve(unhashed_inputs_vec.size());
-			for (std::vector<CraftDefinition*>::iterator i2 = unhashed_inputs_vec.begin();
-					i2 != unhashed_inputs_vec.end(); ++i2) {
-				if (def != *i2) {
-					new_vec_by_input.push_back(*i2);
-				}
-			}
-			m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0].swap(new_vec_by_input);
+			std::vector<CraftDefinition *> &defs = m_craft_defs[(int)CRAFT_HASH_TYPE_UNHASHED][0];
+			defs.erase(std::remove(defs.begin(), defs.end(), def), defs.end());
+			delete def;
 		}
-		m_output_craft_definitions.erase(output.item);
+		m_output_craft_definitions.erase(to_clear);
 		return true;
 	}
 
-	virtual bool clearCraftRecipesByInput(CraftMethod craft_method, unsigned int craft_grid_width,
-		const std::vector<std::string> &recipe, IGameDef *gamedef)
+	virtual bool clearCraftsByInput(const CraftInput &input, IGameDef *gamedef)
 	{
-		bool all_empty = true;
-		for (std::vector<std::string>::size_type i = 0;
-				i < recipe.size(); i++) {
-			if (!recipe[i].empty()) {
-				all_empty = false;
-				break;
-			}
-		}
-		if (all_empty)
+		if (input.empty())
 			return false;
 
-		CraftInput input(craft_method, craft_grid_width, craftGetItems(recipe, gamedef));
 		// Recipes are not yet hashed at this point
-		std::vector<CraftDefinition*> &unhashed_inputs_vec = m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0];
-		std::vector<CraftDefinition*> new_vec_by_input;
-		bool got_hit = false;
-		for (std::vector<CraftDefinition*>::size_type
-				i = unhashed_inputs_vec.size(); i > 0; i--) {
-			CraftDefinition *def = unhashed_inputs_vec[i - 1];
-			/* If the input doesn't match the recipe definition, this recipe definition later
-				will be added back in source map. */
-			if (!def->check(input, gamedef)) {
-				new_vec_by_input.push_back(def);
-				continue;
-			}
-			CraftOutput output = def->getOutput(input, gamedef);
-			got_hit = true;
-			std::map<std::string, std::vector<CraftDefinition*> >::iterator
-				vec_iter = m_output_craft_definitions.find(output.item);
-			if (vec_iter == m_output_craft_definitions.end())
-				continue;
-			std::vector<CraftDefinition*> &vec = vec_iter->second;
-			std::vector<CraftDefinition*> new_vec_by_output;
-			/* We will preallocate necessary memory addresses, so we don't need
-				to reallocate them later. This would save us some performance. */
-			new_vec_by_output.reserve(vec.size());
-			for (std::vector<CraftDefinition*>::iterator i = vec.begin();
-					i != vec.end(); ++i) {
-				/* If pointers from map by input and output are not same,
-					we will add 'CraftDefinition*' to a new vector. */
-				if (def != *i) {
-					/* Adding dereferenced iterator value (which are
-						'CraftDefinition' reference) to a new vector. */
-					new_vec_by_output.push_back(*i);
-				}
-			}
-			// Swaps assigned to current key value with new vector for output map.
-			m_output_craft_definitions[output.item].swap(new_vec_by_output);
-		}
-		if (got_hit)
-			// Swaps value with new vector for input map.
-			m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0].swap(new_vec_by_input);
+		std::vector<CraftDefinition *> &defs = m_craft_defs[(int)CRAFT_HASH_TYPE_UNHASHED][0];
+		std::unordered_set<const CraftDefinition *> defs_to_remove;
+		std::vector<CraftDefinition *> new_defs;
 
-		return got_hit;
+		for (auto def : defs) {
+			if (def->check(input, gamedef))
+				defs_to_remove.insert(def);
+			else
+				new_defs.push_back(def);
+		}
+
+		if (!defs_to_remove.empty()) {
+			for (auto def : defs_to_remove)
+				delete def;
+
+			defs.swap(new_defs);
+
+			for (auto &output : m_output_craft_definitions) {
+				std::vector<CraftDefinition *> &outdefs = output.second;
+				outdefs.erase(std::remove_if(outdefs.begin(), outdefs.end(), [&](const CraftDefinition* def) {
+					return defs_to_remove.find(def) != defs_to_remove.end();
+				}), outdefs.end());
+			}
+		}
+
+		return !defs_to_remove.empty();
 	}
 
 	virtual std::string dump() const
@@ -1058,9 +1178,8 @@ public:
 		std::ostringstream os(std::ios::binary);
 		os << "Crafting definitions:\n";
 		for (int type = 0; type <= craft_hash_type_max; ++type) {
-			for (std::map<u64, std::vector<CraftDefinition*> >::const_iterator
-					it = (m_craft_defs[type]).begin();
-					it != (m_craft_defs[type]).end(); ++it) {
+			for (auto it = m_craft_defs[type].begin();
+					it != m_craft_defs[type].end(); ++it) {
 				for (std::vector<CraftDefinition*>::size_type i = 0;
 						i < it->second.size(); i++) {
 					os << "type " << type
@@ -1074,8 +1193,8 @@ public:
 	}
 	virtual void registerCraft(CraftDefinition *def, IGameDef *gamedef)
 	{
-		verbosestream << "registerCraft: registering craft definition: "
-				<< def->dump() << std::endl;
+		TRACESTREAM(<< "registerCraft: registering craft definition: "
+				<< def->dump() << std::endl);
 		m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0].push_back(def);
 
 		CraftInput input;
@@ -1086,15 +1205,11 @@ public:
 	virtual void clear()
 	{
 		for (int type = 0; type <= craft_hash_type_max; ++type) {
-			for (std::map<u64, std::vector<CraftDefinition*> >::iterator
-					it = m_craft_defs[type].begin();
-					it != m_craft_defs[type].end(); ++it) {
-				for (std::vector<CraftDefinition*>::iterator
-						iit = it->second.begin();
-						iit != it->second.end(); ++iit) {
-					delete *iit;
+			for (auto &it : m_craft_defs[type]) {
+				for (auto &iit : it.second) {
+					delete iit;
 				}
-				it->second.clear();
+				it.second.clear();
 			}
 			m_craft_defs[type].clear();
 		}
@@ -1105,10 +1220,7 @@ public:
 		// Move the CraftDefs from the unhashed layer into layers higher up.
 		std::vector<CraftDefinition *> &unhashed =
 			m_craft_defs[(int) CRAFT_HASH_TYPE_UNHASHED][0];
-		for (std::vector<CraftDefinition*>::size_type i = 0;
-			i < unhashed.size(); i++) {
-			CraftDefinition *def = unhashed[i];
-
+		for (auto def : unhashed) {
 			// Initialize and get the definition's hash
 			def->initHash(gamedef);
 			CraftHashType type = def->getHashType();
@@ -1120,13 +1232,13 @@ public:
 		unhashed.clear();
 	}
 private:
-	//TODO: change both maps to unordered_map when c++11 can be used
-	std::vector<std::map<u64, std::vector<CraftDefinition*> > > m_craft_defs;
-	std::map<std::string, std::vector<CraftDefinition*> > m_output_craft_definitions;
+	std::vector<std::unordered_map<u64, std::vector<CraftDefinition*> > >
+		m_craft_defs;
+	std::unordered_map<std::string, std::vector<CraftDefinition*> >
+		m_output_craft_definitions;
 };
 
 IWritableCraftDefManager* createCraftDefManager()
 {
 	return new CCraftDefManager();
 }
-

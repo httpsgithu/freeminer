@@ -1,27 +1,8 @@
-/*
-script/lua_api/l_inventory.h
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
-
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef L_INVENTORY_H_
-#define L_INVENTORY_H_
+#pragma once
 
 #include "lua_api/l_base.h"
 
@@ -38,10 +19,7 @@ class InvRef : public ModApiBase {
 private:
 	InventoryLocation m_loc;
 
-	static const char className[];
 	static const luaL_Reg methods[];
-
-	static InvRef *checkobject(lua_State *L, int narg);
 
 	static Inventory* getinv(lua_State *L, InvRef *ref);
 
@@ -96,7 +74,7 @@ private:
 	// Returns true if the item completely fits into the list
 	static int l_room_for_item(lua_State *L);
 
-	// contains_item(self, listname, itemstack or itemstring or table or nil) -> true/false
+	// contains_item(self, listname, itemstack or itemstring or table or nil, [match_meta]) -> true/false
 	// Returns true if the list contains the given count of the given item name
 	static int l_contains_item(lua_State *L);
 
@@ -110,26 +88,24 @@ private:
 public:
 	InvRef(const InventoryLocation &loc);
 
-	~InvRef();
+	~InvRef() = default;
 
 	// Creates an InvRef and leaves it on top of stack
 	// Not callable from Lua; all references are created on the C side.
 	static void create(lua_State *L, const InventoryLocation &loc);
-	static void createPlayer(lua_State *L, RemotePlayer *player);
-	static void createNodeMeta(lua_State *L, v3s16 p);
 	static void Register(lua_State *L);
+
+	static const char className[];
 };
 
 class ModApiInventory : public ModApiBase {
 private:
 	static int l_create_detached_inventory_raw(lua_State *L);
 
-	static int l_delete_detached_inventory(lua_State *L);
+	static int l_remove_detached_inventory_raw(lua_State *L);
 
 	static int l_get_inventory(lua_State *L);
 
 public:
 	static void Initialize(lua_State *L, int top);
 };
-
-#endif /* L_INVENTORY_H_ */

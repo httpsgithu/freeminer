@@ -1,106 +1,133 @@
-/*
-player.h
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
-/*
-This file is part of Freeminer.
+#pragma once
 
-Freeminer is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Freeminer  is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with Freeminer.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#ifndef PLAYER_HEADER
-#define PLAYER_HEADER
+#include "threading/lock.h"
+#include "json/json.h"
+#include <atomic>
 
 #include "irrlichttypes_bloated.h"
 #include "inventory.h"
-#include "constants.h" // BS
-#include "threading/mutex.h"
-#include <list>
-#include "threading/lock.h"
-#include "json/json.h"
+#include "constants.h"
+#include "util/basic_macros.h"
+#include "util/string.h"
+#include <mutex>
+#include <functional>
+#include <string>
 
 #define PLAYERNAME_SIZE 20
 
 #define PLAYERNAME_ALLOWED_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 #define PLAYERNAME_ALLOWED_CHARS_USER_EXPL "'a' to 'z', 'A' to 'Z', '0' to '9', '-', '_'"
 
+bool is_valid_player_name(std::string_view name);
+
+struct PlayerFovSpec
+{
+	f32 fov;
+
+	// Whether to multiply the client's FOV or to override it
+	bool is_multiplier;
+
+	// The time to be take to trasition to the new FOV value.
+	// Transition is instantaneous if omitted. Omitted by default.
+	f32 transition_time = 0;
+
+	inline bool operator==(const PlayerFovSpec &other) const {
+		// transition_time is compared here since that could be relevant
+		// when aborting a running transition.
+		return fov == other.fov && is_multiplier == other.is_multiplier &&
+			transition_time == other.transition_time;
+	}
+	inline bool operator!=(const PlayerFovSpec &other) const {
+		return !(*this == other);
+	}
+};
+
 struct PlayerControl
 {
-	PlayerControl()
-	{
-		up = false;
-		down = false;
-		left = false;
-		right = false;
-		jump = false;
-		aux1 = false;
-		sneak = false;
-		LMB = false;
-		RMB = false;
-		pitch = 0;
-		yaw = 0;
-		sidew_move_joystick_axis = .0f;
-		forw_move_joystick_axis = .0f;
-	}
+	PlayerControl() = default;
 
 	PlayerControl(
-		bool a_up,
-		bool a_down,
-		bool a_left,
-		bool a_right,
-		bool a_jump,
-		bool a_aux1,
-		bool a_sneak,
+		bool a_up, bool a_down, bool a_left, bool a_right,
+		bool a_jump, bool a_aux1, bool a_sneak,
 		bool a_zoom,
-		bool a_LMB,
-		bool a_RMB,
-		float a_pitch,
-		float a_yaw,
-		float a_sidew_move_joystick_axis,
-		float a_forw_move_joystick_axis
+		bool a_dig, bool a_place,
+		float a_pitch, float a_yaw,
+		float a_movement_speed, float a_movement_direction
 	)
 	{
-		up = a_up;
-		down = a_down;
-		left = a_left;
-		right = a_right;
+		// Encode direction keys into a single value so nobody uses it accidentally
+		// as movement_{speed,direction} is supposed to be the source of truth.
+		direction_keys = (a_up&1) | ((a_down&1) << 1) |
+			((a_left&1) << 2) | ((a_right&1) << 3);
 		jump = a_jump;
 		aux1 = a_aux1;
 		sneak = a_sneak;
 		zoom = a_zoom;
-		LMB = a_LMB;
-		RMB = a_RMB;
+		dig = a_dig;
+		place = a_place;
 		pitch = a_pitch;
 		yaw = a_yaw;
-		sidew_move_joystick_axis = a_sidew_move_joystick_axis;
-		forw_move_joystick_axis = a_forw_move_joystick_axis;
+		movement_speed = a_movement_speed;
+		movement_direction = a_movement_direction;
 	}
-	bool up;
-	bool down;
-	bool left;
-	bool right;
-	bool jump;
-	bool aux1;
-	bool sneak;
-	bool zoom;
-	bool LMB;
-	bool RMB;
-	float pitch;
-	float yaw;
-	float sidew_move_joystick_axis;
-	float forw_move_joystick_axis;
+
+	// Sets movement_speed and movement_direction according to direction_keys
+	// if direction_keys != 0, otherwise leaves them unchanged to preserve
+	// joystick input.
+	void setMovementFromKeys();
+
+	// For client use
+	u32 getKeysPressed() const;
+	inline bool isMoving() const { return movement_speed > 0.001f; }
+
+	// For server use
+	void unpackKeysPressed(u32 keypress_bits);
+	v2f getMovement() const;
+
+	u8 direction_keys = 0;
+	bool jump = false;
+	bool aux1 = false;
+	bool sneak = false;
+	bool zoom = false;
+	bool dig = false;
+	bool place = false;
+	// Note: These two are NOT available on the server
+	float pitch = 0.0f;
+	float yaw = 0.0f;
+	float movement_speed = 0.0f;
+	float movement_direction = 0.0f;
+};
+
+struct PlayerPhysicsOverride
+{
+	float speed = 1.f;
+	float jump = 1.f;
+	float gravity = 1.f;
+
+	bool sneak = true;
+	bool sneak_glitch = false;
+	// "Temporary" option for old move code
+	bool new_move = true;
+
+	float speed_climb = 1.f;
+	float speed_crouch = 1.f;
+	float liquid_fluidity = 1.f;
+	float liquid_fluidity_smooth = 1.f;
+	float liquid_sink = 1.f;
+	float acceleration_default = 1.f;
+	float acceleration_air = 1.f;
+	float speed_fast = 1.f;
+	float acceleration_fast = 1.f;
+	float speed_walk = 1.f;
+
+	bool operator==(const PlayerPhysicsOverride &other) const;
+	bool operator!=(const PlayerPhysicsOverride &other) const {
+		return !(*this == other);
+	}
 };
 
 class Map;
@@ -108,16 +135,15 @@ struct CollisionInfo;
 struct HudElement;
 class Environment;
 
-// IMPORTANT:
-// Do *not* perform an assignment or copy operation on a Player or
-// RemotePlayer object!  This will copy the lock held for HUD synchronization
 class Player
-: public locker<>
+: public shared_locker
 {
 public:
 
-	Player(const std::string & name, IItemDefManager *idef);
+	Player(const std::string &name, IItemDefManager *idef);
 	virtual ~Player() = 0;
+
+	DISABLE_CLASS_COPY(Player);
 
 	virtual void move(f32 dtime, Environment *env, f32 pos_max_d)
 	{}
@@ -125,73 +151,19 @@ public:
 			std::vector<CollisionInfo> *collision_info)
 	{}
 
-	v3f getSpeed()
+	// in BS-space
+	inline void setSpeed(v3f speed)
 	{
-		auto lock = lock_shared_rec();
-		return m_speed;
-	}
-
-	void setSpeed(v3f speed)
-	{
-		auto lock = lock_unique_rec();
+		const auto lock = lock_unique();
 		m_speed = speed;
 	}
 
 	void addSpeed(v3f speed);
 
-/* DELETE! merge...
-	v3f getPosition()
-	{
-		auto lock = lock_shared_rec();
-		return m_position;
-	}
+	// in BS-space
+	v3f getSpeed() const { const auto lock = lock_shared(); return m_speed; }
 
-	v3s16 getLightPosition() const;
-
- 	v3f getEyeOffset()
-	{
-		float eye_height = camera_barely_in_ceiling ? 1.5f : 1.625f;
-		return v3f(0, BS * eye_height, 0);
-	}
-
-	v3f getEyePosition()
-	{
-		auto lock = lock_shared_rec();
-		return m_position + getEyeOffset();
-	}
-
-	virtual void setPosition(const v3f &position)
-	{
-		auto lock = lock_unique_rec();
-		m_position = position;
-	}
-
-	virtual void setPitch(f32 pitch)
-	{
-		auto lock = lock_unique_rec();
-		m_pitch = pitch;
-	}
-
-	virtual void setYaw(f32 yaw)
-	{
-		auto lock = lock_unique_rec();
-		m_yaw = yaw;
-	}
-
-	f32 getPitch() { auto lock = lock_shared_rec(); return m_pitch; }
-	f32 getYaw() { auto lock = lock_shared_rec(); return m_yaw; }
-	u16 getBreath() { auto lock = lock_shared_rec(); return m_breath; }
-
-	virtual void setBreath(u16 breath) { m_breath = breath; }
-
-	f32 getRadPitch() const { return m_pitch * core::DEGTORAD; }
-	f32 getRadYaw() const { return m_yaw * core::DEGTORAD; }
-	aabb3f getCollisionbox() const { return m_collisionbox; }
-*/
-/*
-	const char *getName() const { return m_name; }
-*/
-	const std::string &getName() const { return m_name; }
+	const std::string& getName() const { return m_name; }
 
 	u32 getFreeHudID()
 	{
@@ -205,6 +177,7 @@ public:
 
 	v3f eye_offset_first;
 	v3f eye_offset_third;
+	v3f eye_offset_third_front;
 
 	Inventory inventory;
 
@@ -222,25 +195,40 @@ public:
 	f32 movement_gravity;
 	f32 movement_fall_aerodynamics;
 
-	v2s32 local_animations[4];
+	v2f local_animations[4];
 	float local_animation_speed;
 
-	//std::atomic_ushort hp;
-
-	std::atomic_short peer_id;
-
 	std::string inventory_formspec;
+	std::string formspec_prepend;
 
 	PlayerControl control;
-	Mutex control_mutex;
-	const PlayerControl& getPlayerControl() {
-		std::lock_guard<Mutex> lock(control_mutex);
-		return control;
+	std::mutex control_mutex;
+	const PlayerControl& getPlayerControl() { 
+		std::lock_guard<std::mutex> lock(control_mutex);
+		return control; }
+
+	PlayerPhysicsOverride physics_override;
+
+	// Returns non-empty `selected` ItemStack. `hand` is a fallback, if specified
+	ItemStack &getWieldedItem(ItemStack *selected, ItemStack *hand) const;
+	void setWieldIndex(u16 index);
+	u16 getWieldIndex();
+
+	bool setFov(const PlayerFovSpec &spec)
+	{
+		if (m_fov_override_spec == spec)
+			return false;
+		m_fov_override_spec = spec;
+		return true;
 	}
 
-	u32 keyPressed;
+	const PlayerFovSpec &getFov() const
+	{
+		return m_fov_override_spec;
+	}
 
 	HudElement* getHud(u32 id);
+	void        hudApply(std::function<void(const std::vector<HudElement*>&)> f);
 	u32         addHud(HudElement* hud);
 	HudElement* removeHud(u32 id);
 	void        clearHud();
@@ -248,23 +236,26 @@ public:
 	u32 hud_flags;
 	s32 hud_hotbar_itemcount;
 
+    // fm:
 	std::string hotbar_image;
-	int hotbar_image_items;
+	int hotbar_image_items {};
 	std::string hotbar_selected_image;
+	// ==
+	// Get actual usable number of hotbar items (clamped to size of "main" list)
+	u16 getMaxHotbarItemcount();
 
 	std::string m_name;
 protected:
-	//char m_name[PLAYERNAME_SIZE];
-	v3f m_speed;
+	v3f m_speed; // velocity; in BS-space
+	std::atomic_uint16_t m_wield_index {0};
+	PlayerFovSpec m_fov_override_spec = { 0.0f, false, 0.0f };
 
 	std::vector<HudElement *> hud;
+
 private:
 	// Protect some critical areas
 	// hud for example can be modified by EmergeThread
 	// and ServerThread
-	Mutex m_mutex;
+	// FIXME: ^ this sounds like nonsense. should be checked.
+	std::mutex m_mutex;
 };
-
-
-#endif
-

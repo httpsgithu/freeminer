@@ -39,9 +39,9 @@
 
 class CircuitElement;
 class Circuit;
-class GameScripting;
+class ServerScripting;
 class Map;
-class INodeDefManager;
+class NodeDefManager;
 
 // enum FaceId
 // {
@@ -74,13 +74,13 @@ struct CircuitElementContainer {
 
 class CircuitElement {
 public:
-	CircuitElement(v3POS pos, u32 id, u8 delay);
+	CircuitElement(v3pos_t pos, u32 id, u8 delay);
 	CircuitElement(const CircuitElement& element);
 	CircuitElement(u32 id);
 	~CircuitElement();
 	void addConnectedElement();
 	void update();
-	bool updateState(GameScripting* m_script, Map* map, INodeDefManager* ndef);
+	bool updateState(ServerScripting* m_script, Map* map, const NodeDefManager* ndef);
 	void resetState();
 
 	void serialize(std::ostream& out) const;
@@ -94,12 +94,12 @@ public:
 	// First - pointer to object to which connected.
 	// Second - face id.
 	static void findConnectedWithFace(std::vector <std::pair <std::list<CircuitElement>::iterator, u8> >& connected,
-	                                  Map* map, INodeDefManager* ndef, v3POS pos, u8 face,
-	                                  std::map<v3POS, std::list<CircuitElement>::iterator>& pos_to_iterator,
+	                                  Map* map, const NodeDefManager* ndef, v3pos_t pos, u8 face,
+	                                  std::map<v3pos_t, std::list<CircuitElement>::iterator>& pos_to_iterator,
 	                                  bool connected_faces[6]);
 
 	CircuitElementContainer getFace(int id) const;
-	v3POS getPos() const;
+	v3pos_t getPos() const;
 	u32 getId() const;
 
 	void connectFace(int id, std::list <CircuitElementVirtualContainer>::iterator it,
@@ -139,7 +139,7 @@ public:
 	static u8 rotate_face[168];
 	static u8 reverse_rotate_face[168];
 private:
-	v3POS m_pos;
+	v3pos_t m_pos;
 	u32 m_element_id;
 	u8 m_prev_input_state;
 	u8 m_current_input_state;
